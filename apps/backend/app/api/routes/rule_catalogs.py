@@ -6,6 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, RequireAdmin, get_db
 from app.schemas.rule_catalog import CatalogSummaryOut, CatalogUploadRequest, CatalogWithRulesOut, RuleDefinitionOut
+from app.services.l1_rules import build_l1_rule_registry
+from app.services.l2_rules import build_l2_rule_registry
+from app.services.l3_rules import build_l3_rule_registry
 from app.services.rule_catalog_service import RuleCatalogService
 
 router = APIRouter(prefix="/rule-catalogs", tags=["rule-catalogs"])
@@ -91,3 +94,44 @@ async def get_catalog_by_id(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Catalog not found")
     catalog, rules = result
     return _to_detail(catalog, rules)
+
+
+@router.get("/active/coverage")
+async def get_active_catalog_coverage(
+    _user: CurrentUser,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    platform: Annotated[str, Query()] = "yandex_direct",
+) -> dict:
+    service = RuleCatalogService(session)
+    result = await service.get_active_with_rules(platform)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Active catalog not found")
+    catalog, rules = result
+    implemented = {
+        "L1": set(build_l1_rule_registry().keys()),
+        "L2": set(build_l2_rule_registry().keys()),
+        "L3": set(build_l3_rule_registry().keys()),
+    }
+    rows = []
+    missing = []
+    for rule in rules:
+        lvl = str(rule.level)
+        is_implemented = True if rule.check_type == "ai_assisted" else rule.rule_code in implemented.get(lvl, set())
+        row = {
+            "rule_code": rule.rule_code,
+            "level": lvl,
+            "check_type": rule.check_type,
+            "enabled": rule.enabled,
+            "implemented": is_implemented,
+        }
+        rows.append(row)
+        if rule.enabled and not is_implemented:
+            missing.append(rule.rule_code)
+    return {
+        "catalog_version": catalog.version,
+        "total_rules": len(rows),
+        "enabled_rules": len([r for r in rows if r["enabled"]]),
+        "implemented_enabled_rules": len([r for r in rows if r["enabled"] and r["implemented"]]),
+        "missing_enabled_rules": sorted(missing),
+        "rules": rows,
+    }

@@ -1,0 +1,19 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+ARG NEXT_PUBLIC_BASE_PATH
+ARG NEXT_PUBLIC_API_V1_URL
+ENV NEXT_PUBLIC_BASE_PATH=${NEXT_PUBLIC_BASE_PATH}
+ENV NEXT_PUBLIC_API_V1_URL=${NEXT_PUBLIC_API_V1_URL}
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+
+RUN npm run build
+
+EXPOSE 3000
+
+CMD ["npm", "run", "start", "--", "-p", "3000", "-H", "0.0.0.0"]

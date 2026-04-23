@@ -21,6 +21,7 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 def main() -> None:
     email = os.environ.get("SEED_ADMIN_EMAIL", "admin@example.com").lower().strip()
+    full_name = os.environ.get("SEED_ADMIN_FULL_NAME", "Platform Admin").strip() or "Platform Admin"
     password = os.environ.get("SEED_ADMIN_PASSWORD", "ChangeMeNow123!")
     if len(password) < 8:
         msg = "SEED_ADMIN_PASSWORD must be at least 8 characters"
@@ -35,6 +36,7 @@ def main() -> None:
         hashed = hash_password(password)
         if user is None:
             user = User(
+                full_name=full_name,
                 email=email,
                 hashed_password=hashed,
                 role=UserRole.admin,
@@ -43,6 +45,7 @@ def main() -> None:
             session.add(user)
             print(f"Created admin user {email}")
         else:
+            user.full_name = full_name
             user.hashed_password = hashed
             user.role = UserRole.admin
             user.is_active = True

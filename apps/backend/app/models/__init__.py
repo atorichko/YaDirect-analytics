@@ -1,6 +1,8 @@
+from app.models.ai_interaction import AIInteraction
 from app.models.action_log import ActionLog
 from app.models.account_credential import AccountCredential
 from app.models.ad_account import AdAccount
+from app.models.app_setting import AppSetting
 from app.models.audit import Audit, AuditStatus, AuditTrigger
 from app.models.audit_exception import AuditException
 from app.models.base import Base
@@ -11,8 +13,10 @@ from app.models.user import User, UserRole
 
 __all__ = [
     "ActionLog",
+    "AIInteraction",
     "AccountCredential",
     "AdAccount",
+    "AppSetting",
     "Audit",
     "AuditException",
     "AuditStatus",
