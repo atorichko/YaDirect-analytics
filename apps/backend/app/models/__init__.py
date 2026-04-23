@@ -6,6 +6,7 @@ from app.models.audit_exception import AuditException
 from app.models.base import Base
 from app.models.entity_snapshot import EntitySnapshot, SnapshotEntityType
 from app.models.finding import Finding, FindingLevel, FindingSeverity, FindingStatus
+from app.models.rule_catalog import RuleCatalog, RuleDefinition
 from app.models.user import User, UserRole
 
 __all__ = [
@@ -22,6 +23,8 @@ __all__ = [
     "FindingLevel",
     "FindingSeverity",
     "FindingStatus",
+    "RuleCatalog",
+    "RuleDefinition",
     "SnapshotEntityType",
     "User",
     "UserRole",
