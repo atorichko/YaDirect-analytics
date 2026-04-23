@@ -20,6 +20,7 @@ from app.repositories.entity_snapshot import EntitySnapshotRepository
 from app.repositories.finding import FindingRepository
 from app.repositories.rule_catalog import RuleCatalogRepository
 from app.schemas.audit import RunAIAuditResponse
+from app.core.ai_prompt_defaults import DEFAULT_AI_ANALYSIS_PROMPT_PREFIX
 from app.services.finding_history_service import FindingHistoryService
 
 
@@ -29,10 +30,7 @@ def _is_active_state(value: object) -> bool:
 
 class AIAuditService:
     PROMPT_SETTING_KEY = "ai_analysis_prompt"
-    DEFAULT_PROMPT_PREFIX = (
-        "Проведи аудит рекламной кампании Яндекс Директ и верни структурированные находки: "
-        "уровень (L1/L2/L3), severity, краткое объяснение и рекомендацию."
-    )
+    DEFAULT_PROMPT_PREFIX = DEFAULT_AI_ANALYSIS_PROMPT_PREFIX
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -150,9 +148,10 @@ class AIAuditService:
             fixed_rows = await self._history.apply_status_lifecycle(
                 account_id=account_id,
                 audit_id=audit.id,
-                level=FindingLevel.L3,
+                level=None,
                 campaign_external_id=campaign_external_id,
                 current_findings=findings_rows,
+                require_ai_verdict_for_previous=True,
             )
             await self._findings.bulk_create(findings_rows + fixed_rows)
             await self._audits.mark_completed(audit, datetime.now(timezone.utc))

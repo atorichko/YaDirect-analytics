@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
+import { SiteHelpLink } from "@/components/site-help-link";
 import { Button } from "@/components/ui/button";
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api-client";
 import { clearSession, getAccessToken } from "@/lib/auth";
+import { RECOMMENDED_AI_PROMPT_PREFIX } from "@/lib/recommended-ai-prompt";
 
 type Me = {
   id: string;
@@ -202,7 +204,8 @@ export default function SettingsPage() {
             </p>
           ) : null}
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <SiteHelpLink />
           <Button variant="secondary" asChild>
             <Link href="/dashboard">Dashboard</Link>
           </Button>
@@ -340,16 +343,13 @@ export default function SettingsPage() {
 
       <section className="rounded border p-4">
         <h2 className="mb-3 text-lg font-medium">Промт AI-анализа</h2>
+        <p className="mb-2 text-sm text-muted-foreground">
+          Префикс задаёт роль модели и формат JSON-ответа; к нему на сервере автоматически добавляются код правила, название и
+          данные сущности. Для продакшена используйте рекомендованный шаблон или отредактируйте его под свою политику.
+        </p>
         <div className="mb-2">
-          <Button
-            variant="secondary"
-            onClick={() =>
-              setPrompt(
-                "Ты senior-аналитик performance-маркетинга в недвижимости. Проанализируй входные данные кампании Яндекс Директ, верни только JSON: {rule_code, entity_key, result(pass|fail|needs_review), severity(warning|high|critical), confidence(0..1), impact_ru, recommendation_ru, reasoning_short_ru, evidence}. Не выдумывай данные, опирайся только на вход.",
-              )
-            }
-          >
-            Подставить рекомендованный шаблон промта
+          <Button variant="secondary" onClick={() => setPrompt(RECOMMENDED_AI_PROMPT_PREFIX)}>
+            Подставить рекомендованный промт (продакшен)
           </Button>
         </div>
         <textarea

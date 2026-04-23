@@ -4,11 +4,50 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { SiteHelpLink } from "@/components/site-help-link";
 import { Button } from "@/components/ui/button";
 import type { AdAccount, Campaign, JobResponse } from "@/features/dashboard/types";
 import { apiGet, apiPost, apiPut } from "@/lib/api-client";
 import { clearSession, getAccessToken } from "@/lib/auth";
-type Finding = { campaign_external_id: string | null; created_at: string };
+
+type Finding = { campaign_external_id: string | null; created_at: string; status: string };
+
+function campaignStatusRu(raw: string | null | undefined): string {
+  const s = String(raw ?? "").trim().toUpperCase();
+  if (["ON", "ACTIVE", "ENABLED"].includes(s)) return "Активна";
+  if (["OFF", "STOPPED", "SUSPENDED"].includes(s)) return "Остановлена";
+  if (["ARCHIVED", "ARCHIVE"].includes(s)) return "В архиве";
+  if (["ENDED", "CONVERTED"].includes(s)) return "Завершена";
+  if (["DRAFT"].includes(s)) return "Черновик";
+  if (["MODERATION", "PREMODERATION"].includes(s)) return "На модерации";
+  if (["ACCEPTED", "PREACCEPTED"].includes(s)) return "Допущена";
+  return raw ? String(raw) : "—";
+}
+
+function reportLinkMeta(
+  campaignId: string,
+  lastAuditMap: Record<string, string>,
+  openByCampaign: Record<string, number>,
+): { className: string; title: string } {
+  const hasAudit = Boolean(lastAuditMap[campaignId]);
+  const n = openByCampaign[campaignId] ?? 0;
+  if (!hasAudit) {
+    return {
+      className: "border border-muted-foreground/40 bg-muted/30 text-muted-foreground",
+      title: "Отчёт ещё не формировался. Запустите аудит.",
+    };
+  }
+  if (n > 0) {
+    return {
+      className: "border-2 border-red-500 bg-background text-foreground",
+      title: `В отчёте замечаний: ${n}`,
+    };
+  }
+  return {
+    className: "border-2 border-emerald-600 bg-background text-foreground",
+    title: "В последнем отчёте замечаний нет",
+  };
+}
 type AutostartSettings = { enabled: boolean; every_n_days: number; start_date: string };
 type JobStatus = {
   task_id: string;
@@ -46,6 +85,7 @@ export default function ProjectPage() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [campaignTaskIds, setCampaignTaskIds] = useState<CampaignAuditTaskMap>({});
   const [campaignStatusMap, setCampaignStatusMap] = useState<Record<string, string>>({});
+  const [openFindingCountByCampaign, setOpenFindingCountByCampaign] = useState<Record<string, number>>({});
   const [isRefreshingCampaigns, setIsRefreshingCampaigns] = useState(false);
 
   const loadProjectData = useCallback(async (activeToken: string) => {
@@ -58,6 +98,14 @@ export default function ProjectPage() {
     ]);
     setAccount(accountsData.find((a) => a.id === accountId) ?? null);
     setCampaigns(campaignsData);
+    const openCounts: Record<string, number> = {};
+    for (const row of findingsData) {
+      if (row.status === "fixed") continue;
+      const cid = row.campaign_external_id;
+      if (!cid) continue;
+      openCounts[cid] = (openCounts[cid] ?? 0) + 1;
+    }
+    setOpenFindingCountByCampaign(openCounts);
     const map: Record<string, string> = {};
     for (const row of findingsData) {
       if (!row.campaign_external_id) continue;
@@ -86,7 +134,8 @@ export default function ProjectPage() {
       try {
         await loadProjectData(token);
         setInfo("Показаны сохраненные данные проекта из базы.");
-      } catch {
+      } catch (e) {
+        if (e instanceof Error && e.message === "UNAUTHORIZED") return;
         setError("Не удалось загрузить проект.");
       }
     })();
@@ -283,7 +332,8 @@ export default function ProjectPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Проект: {account?.name ?? "-"}</h1>
           {account ? <p className="text-sm text-muted-foreground">аккаунт в Директ: {account.login}</p> : null}
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <SiteHelpLink />
           <Button variant="secondary" asChild>
             <Link href="/dashboard">К аккаунтам</Link>
           </Button>
@@ -311,9 +361,11 @@ export default function ProjectPage() {
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-lg font-medium">Кампании аккаунта</h2>
           <div className="flex items-center gap-2">
-            <Button title="Запустить аудит всех активных кампаний" onClick={() => void runAllActiveCampaigns()}>
-              ▶
-            </Button>
+            <span className={accountAuditTaskId ? "audit-play-running inline-flex rounded-md" : "inline-flex"}>
+              <Button title="Запустить аудит всех активных кампаний" onClick={() => void runAllActiveCampaigns()}>
+                ▶
+              </Button>
+            </span>
             <Button
               variant="secondary"
               title="Обновить список кампаний из API Директа"
@@ -400,19 +452,31 @@ export default function ProjectPage() {
                 <tr key={c.id} className="border-t">
                   <td className="px-3 py-2">{c.id}</td>
                   <td className="px-3 py-2">{c.name ?? "-"}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{c.status ?? "-"}</td>
-                  <td className="px-3 py-2 text-muted-foreground">
+                  <td className="px-3 py-2 text-xs text-muted-foreground">{campaignStatusRu(c.status)}</td>
+                  <td className="px-3 py-2 text-xs text-muted-foreground">
                     {lastAuditMap[c.id] ? new Date(lastAuditMap[c.id]).toLocaleString("ru-RU") : "нет"}
-                    {campaignStatusMap[c.id] ? <div className="text-xs text-blue-700">{campaignStatusMap[c.id]}</div> : null}
+                    {campaignStatusMap[c.id] ? <div className="text-[11px] text-blue-700">{campaignStatusMap[c.id]}</div> : null}
                   </td>
                   <td className="px-3 py-2">
-                    <div className="flex gap-2">
-                      <Button size="sm" onClick={() => void runCampaignAudit(c.id)}>
-                        ▶
-                      </Button>
-                      <Button size="sm" variant="secondary" asChild>
-                        <Link href={`/projects/${accountId}/campaigns/${encodeURIComponent(c.id)}/report`}>Отчет</Link>
-                      </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <span className={campaignTaskIds[c.id] ? "audit-play-running inline-flex rounded-md" : "inline-flex"}>
+                        <Button size="sm" onClick={() => void runCampaignAudit(c.id)}>
+                          ▶
+                        </Button>
+                      </span>
+                      {(() => {
+                        const meta = reportLinkMeta(c.id, lastAuditMap, openFindingCountByCampaign);
+                        return (
+                          <Button size="sm" variant="secondary" asChild className={meta.className}>
+                            <Link
+                              href={`/projects/${accountId}/campaigns/${encodeURIComponent(c.id)}/report`}
+                              title={meta.title}
+                            >
+                              Отчёт
+                            </Link>
+                          </Button>
+                        );
+                      })()}
                     </div>
                   </td>
                 </tr>

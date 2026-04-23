@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import { SiteHelpLink } from "@/components/site-help-link";
 import { Button } from "@/components/ui/button";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { getAccessToken } from "@/lib/auth";
+import { ruleTitleRu } from "@/lib/rule-titles-ru";
 
 type Campaign = { id: string; name: string | null };
 type JobResponse = { task_id: string; task_name: string; status: string };
@@ -26,19 +28,104 @@ type Finding = {
   severity: string;
   level: string;
   group_external_id?: string | null;
+  ad_external_id?: string | null;
+  campaign_external_id?: string | null;
   issue_location: string;
-  evidence?: {
-    group_id?: string;
-    group_name?: string;
-    keywords?: string[];
-    keyword_ids?: string[];
-    normalized_keyword?: string;
-  } | null;
+  evidence?: Record<string, unknown> | null;
   impact_ru: string;
   recommendation_ru: string;
   status: string;
   created_at: string;
 };
+
+const EVIDENCE_LABEL_RU: Record<string, string> = {
+  campaign_id: "Кампания",
+  campaign_name: "Название кампании",
+  group_id: "Группа",
+  group_name: "Название группы",
+  ad_id: "Объявление",
+  keyword_id: "Ключ",
+  keyword_text: "Фраза",
+  keywords: "Фразы",
+  keyword_ids: "ID фраз",
+  normalized_keyword: "Нормализованная фраза",
+  active_group_count: "Активных групп",
+  groups_in_snapshot: "Группы в снимке",
+  url_field: "Поле URL",
+  url_value: "URL",
+  checked_url: "Проверенный URL",
+  final_url: "Итоговый URL",
+  status_code: "HTTP-код",
+  network_error: "Сеть",
+  missing_utm_params: "Нет UTM",
+  utm_validation_errors: "Ошибки UTM",
+  redirect_chain: "Цепочка редиректов",
+  broken_sitelinks: "Битые быстрые ссылки",
+  conflicting_negative: "Конфликт минус-слова",
+  conflict_tokens: "Конфликтующие токены",
+  missing_negative_tokens: "Нужны минус-слова",
+  overlap_keywords: "Пересечения",
+  ad_ids: "Объявления",
+  left_group_id: "Группа А",
+  right_group_id: "Группа Б",
+  semantic_overlap_examples: "Примеры пересечений",
+};
+
+function evidenceLabel(key: string): string {
+  return EVIDENCE_LABEL_RU[key] ?? key;
+}
+
+function formatEvidenceValue(key: string, v: unknown): React.ReactNode {
+  if (v === null || v === undefined) return "—";
+  if (key === "groups_in_snapshot" && Array.isArray(v)) {
+    return (
+      <ul className="mt-1 list-inside list-disc space-y-0.5">
+        {(v as Record<string, unknown>[]).map((g, i) => (
+          <li key={i}>
+            ID {(g.group_id ?? g.id) as string}
+            {g.group_name ? ` — ${String(g.group_name)}` : ""}
+            {g.status != null ? ` — статус: ${String(g.status)}` : ""}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  if (Array.isArray(v)) {
+    if (v.length > 0 && typeof v[0] === "object") {
+      return (
+        <ul className="mt-1 list-inside list-disc space-y-0.5 font-mono text-[11px]">
+          {v.map((item, i) => (
+            <li key={i}>{JSON.stringify(item)}</li>
+          ))}
+        </ul>
+      );
+    }
+    return (v as unknown[]).map((x) => String(x)).join(", ");
+  }
+  if (typeof v === "object") {
+    return <pre className="mt-1 max-h-40 overflow-auto rounded bg-muted/50 p-2 text-[11px]">{JSON.stringify(v, null, 2)}</pre>;
+  }
+  return String(v);
+}
+
+function EvidenceBlock({ ev }: { ev: Record<string, unknown> | null | undefined }) {
+  if (!ev || Object.keys(ev).length === 0) {
+    return <p className="text-xs text-muted-foreground">Нет структурированных подсказок по объектам.</p>;
+  }
+  return (
+    <dl className="space-y-2 text-xs">
+      {Object.entries(ev).map(([k, v]) => {
+        if (v === null || v === undefined || v === "") return null;
+        return (
+          <div key={k}>
+            <dt className="font-medium text-foreground">{evidenceLabel(k)}</dt>
+            <dd className="text-muted-foreground">{formatEvidenceValue(k, v)}</dd>
+          </div>
+        );
+      })}
+    </dl>
+  );
+}
 
 export default function CampaignReportPage() {
   const params = useParams<{ accountId: string; campaignId: string }>();
@@ -52,6 +139,7 @@ export default function CampaignReportPage() {
   const [showFixed, setShowFixed] = useState(false);
   const [auditTaskId, setAuditTaskId] = useState<string | null>(null);
   const [auditStatus, setAuditStatus] = useState<string | null>(null);
+  const [auditRunning, setAuditRunning] = useState(false);
   const levels = ["L1", "L2", "L3", "AI"] as const;
 
   async function loadReport(activeToken: string) {
@@ -68,7 +156,8 @@ export default function CampaignReportPage() {
     void (async () => {
       try {
         await loadReport(token);
-      } catch {
+      } catch (e) {
+        if (e instanceof Error && e.message === "UNAUTHORIZED") return;
         setError("Не удалось загрузить отчет кампании.");
       }
     })();
@@ -81,8 +170,8 @@ export default function CampaignReportPage() {
       const key = [
         row.rule_code,
         row.issue_location,
-        row.evidence?.group_id ?? "",
-        row.evidence?.normalized_keyword ?? "",
+        String(row.evidence?.group_id ?? ""),
+        String(row.evidence?.normalized_keyword ?? ""),
         row.group_external_id ?? "",
       ].join("|");
       if (!byKey.has(key)) {
@@ -122,10 +211,19 @@ export default function CampaignReportPage() {
     return v;
   }
 
+  function levelDescription(lvl: string): string {
+    if (lvl === "L1") return "Структура, семантика, модерация, расширения (без внешних HTTP-проверок).";
+    if (lvl === "L2") return "Стратегии, Метрика, цели, обучение, бюджетные ограничения.";
+    if (lvl === "L3") return "Технические проверки URL, редиректов, SSL и UTM.";
+    if (lvl === "AI") return "Дополнительный разбор с помощью модели (эвристики и формулировки).";
+    return "";
+  }
+
   async function runCampaignAudit() {
     if (!token) return;
     try {
       setError(null);
+      setAuditRunning(true);
       const result = await apiPost<JobResponse>("/audits/campaign/run-job", token, {
         account_id: accountId,
         campaign_id: campaignId,
@@ -134,8 +232,10 @@ export default function CampaignReportPage() {
       setAuditTaskId(result.task_id);
       setAuditStatus("Аудит запущен...");
     } catch (err) {
+      if (err instanceof Error && err.message === "UNAUTHORIZED") return;
       const text = err instanceof Error ? err.message : String(err);
       setError(`Не удалось запустить аудит: ${text}`);
+      setAuditRunning(false);
     }
   }
 
@@ -158,6 +258,7 @@ export default function CampaignReportPage() {
             setAuditStatus("Аудит завершился с ошибкой.");
           }
           setAuditTaskId(null);
+          setAuditRunning(false);
         } catch {
           // ignore transient poll errors
         }
@@ -174,9 +275,14 @@ export default function CampaignReportPage() {
           <p className="text-sm text-muted-foreground">ID кампании: {campaignId}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button onClick={() => void runCampaignAudit()}>▶ Запустить аудит</Button>
+          <SiteHelpLink />
+          <span className={auditRunning || auditTaskId ? "audit-play-running inline-flex rounded-md" : "inline-flex"}>
+            <Button onClick={() => void runCampaignAudit()} disabled={auditRunning || !!auditTaskId}>
+              ▶ Запустить аудит
+            </Button>
+          </span>
           <Button variant="secondary" asChild>
-            <Link href={`/projects/${accountId}`}>К кампании</Link>
+            <Link href={`/projects/${accountId}`}>К кампаниям</Link>
           </Button>
         </div>
       </div>
@@ -198,6 +304,7 @@ export default function CampaignReportPage() {
             <p className="text-xs text-muted-foreground">Уровень</p>
             <p className="text-lg font-semibold">{lvl}</p>
             <p className="text-sm text-muted-foreground">Найдено: {countByLevel[lvl] ?? 0}</p>
+            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{levelDescription(lvl)}</p>
           </div>
         ))}
       </section>
@@ -206,55 +313,73 @@ export default function CampaignReportPage() {
         <table className="min-w-full text-sm">
           <thead className="bg-muted">
             <tr>
-              <th className="px-3 py-2 text-left">Правило</th>
-              <th className="px-3 py-2 text-left">Критичность</th>
-              <th className="px-3 py-2 text-left">Уровень</th>
-              <th className="px-3 py-2 text-left">Статус</th>
-              <th className="px-3 py-2 text-left">Детали</th>
-              <th className="px-3 py-2 text-left">Дата</th>
+              <th className="px-3 py-2 text-left">Замечание (нажмите для подробностей)</th>
             </tr>
           </thead>
           <tbody>
-            {visibleRows.map((row) => (
-              <tr key={row.id} className="border-t">
-                <td className="px-3 py-2">{row.rule_name}</td>
-                <td className="px-3 py-2">{severityRu(row.severity)}</td>
-                <td className="px-3 py-2">{row.level}</td>
-                <td className="px-3 py-2">{statusRu(row.status)}</td>
-                <td className="px-3 py-2">
-                  {row.rule_code === "DUPLICATE_KEYWORDS_IN_GROUP" ? (
-                    <div className="space-y-1">
-                      <p>
-                        Группа: <span className="font-medium">{row.evidence?.group_name ?? "-"}</span> (ID:{" "}
-                        {row.evidence?.group_id ?? row.group_external_id ?? "-"})
-                      </p>
-                      <p className="text-muted-foreground">Дублирующиеся фразы:</p>
-                      <div className="rounded border bg-muted/40 p-2">
-                        {(row.evidence?.keywords ?? []).map((kw, idx) => (
-                          <div key={`${row.id}-${idx}`}>- {kw}</div>
-                        ))}
+            {visibleRows.map((row) => {
+              const title = ruleTitleRu(row.rule_code, row.rule_name);
+              const loc = [
+                row.campaign_external_id ? `камп. ${row.campaign_external_id}` : null,
+                row.group_external_id ? `гр. ${row.group_external_id}` : null,
+                row.ad_external_id ? `объявл. ${row.ad_external_id}` : null,
+              ]
+                .filter(Boolean)
+                .join(", ");
+              return (
+                <tr key={row.id} className="border-t">
+                  <td className="px-3 py-2 align-top">
+                    <details className="group rounded-md border border-transparent open:border-border open:bg-muted/30">
+                      <summary className="cursor-pointer list-none px-1 py-2 [&::-webkit-details-marker]:hidden">
+                        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                          <span className="text-sm font-semibold">{title}</span>
+                          <span className="text-xs text-muted-foreground">{severityRu(row.severity)}</span>
+                          <span className="text-xs text-muted-foreground">{row.level}</span>
+                          <span className="text-xs text-muted-foreground">{statusRu(row.status)}</span>
+                          {loc ? <span className="text-xs text-blue-800">Объекты: {loc}</span> : null}
+                          <span className="ml-auto text-xs text-muted-foreground">
+                            {new Date(row.created_at).toLocaleString("ru-RU")}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-sm text-foreground">{row.impact_ru}</p>
+                      </summary>
+                      <div className="border-t px-3 py-2">
+                        <p className="text-xs font-medium text-muted-foreground">Рекомендация</p>
+                        <p className="text-sm">{row.recommendation_ru}</p>
+                        <p className="mt-2 text-xs font-medium text-muted-foreground">Детали (снимок аудита)</p>
+                        <EvidenceBlock ev={row.evidence ?? undefined} />
                       </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      <p>{row.impact_ru}</p>
-                      <p className="text-muted-foreground">{row.recommendation_ru}</p>
-                    </div>
-                  )}
-                </td>
-                <td className="px-3 py-2 text-muted-foreground">{new Date(row.created_at).toLocaleString("ru-RU")}</td>
-              </tr>
-            ))}
+                    </details>
+                  </td>
+                </tr>
+              );
+            })}
             {visibleRows.length === 0 ? (
               <tr>
-                <td className="px-3 py-6 text-muted-foreground" colSpan={6}>
-                  По кампании пока нет находок.
-                </td>
+                <td className="px-3 py-6 text-muted-foreground">По кампании пока нет находок.</td>
               </tr>
             ) : null}
           </tbody>
         </table>
       </div>
+
+      <section className="rounded border bg-muted/20 p-4 text-sm">
+        <h2 className="mb-2 font-medium">Легенда уровней проверки</h2>
+        <ul className="list-inside list-disc space-y-1 text-muted-foreground">
+          <li>
+            <strong className="text-foreground">L1</strong> — {levelDescription("L1")}
+          </li>
+          <li>
+            <strong className="text-foreground">L2</strong> — {levelDescription("L2")}
+          </li>
+          <li>
+            <strong className="text-foreground">L3</strong> — {levelDescription("L3")}
+          </li>
+          <li>
+            <strong className="text-foreground">AI</strong> — {levelDescription("AI")}
+          </li>
+        </ul>
+      </section>
     </main>
   );
 }

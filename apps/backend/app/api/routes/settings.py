@@ -4,16 +4,14 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import RequireAdmin, get_db
+from app.core.ai_prompt_defaults import DEFAULT_AI_ANALYSIS_PROMPT_PREFIX
 from app.models.app_setting import AppSetting
 from app.schemas.settings import PromptSettingsOut, PromptSettingsUpdateRequest
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 PROMPT_KEY = "ai_analysis_prompt"
-DEFAULT_PROMPT = (
-    "Проведи аудит рекламной кампании Яндекс Директ и верни структурированные находки: "
-    "уровень (L1/L2/L3), severity, краткое объяснение и рекомендацию."
-)
+DEFAULT_PROMPT = DEFAULT_AI_ANALYSIS_PROMPT_PREFIX
 
 
 @router.get("/ai-prompt", response_model=PromptSettingsOut)

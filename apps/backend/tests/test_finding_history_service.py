@@ -11,12 +11,31 @@ class _StubFindingRepo:
         self._rows = rows
 
     async def list_by_account(  # noqa: ANN001
-        self, account_id, *, exclude_audit_id=None, level=None, campaign_external_id=None
+        self,
+        account_id,
+        *,
+        exclude_audit_id=None,
+        level=None,
+        campaign_external_id=None,
+        require_ai_verdict=None,
     ):
-        return self._rows
+        out = list(self._rows)
+        if level is not None:
+            out = [r for r in out if r.level == level]
+        if require_ai_verdict is True:
+            out = [r for r in out if r.ai_verdict is not None]
+        elif require_ai_verdict is False:
+            out = [r for r in out if r.ai_verdict is None]
+        return out
 
 
-def _make_finding(*, status: FindingStatus, fingerprint: str, created_at: datetime) -> Finding:
+def _make_finding(
+    *,
+    status: FindingStatus,
+    fingerprint: str,
+    created_at: datetime,
+    ai_verdict: dict | None = None,
+) -> Finding:
     row = Finding(
         audit_id=uuid4(),
         account_id=uuid4(),
@@ -35,7 +54,7 @@ def _make_finding(*, status: FindingStatus, fingerprint: str, created_at: dateti
         fingerprint=fingerprint,
         status=status,
         suspected_sabotage=False,
-        ai_verdict=None,
+        ai_verdict=ai_verdict,
     )
     row.created_at = created_at
     return row
@@ -67,6 +86,55 @@ def test_missing_previous_open_becomes_fixed() -> None:
     fixed_rows = asyncio.run(
         service.apply_status_lifecycle(
             account_id=uuid4(), audit_id=uuid4(), level=FindingLevel.L1, current_findings=[]
+        )
+    )
+    assert len(fixed_rows) == 1
+    assert fixed_rows[0].status == FindingStatus.fixed
+
+
+def test_ai_lifecycle_ignores_deterministic_open_findings() -> None:
+    """AI audit must not mark deterministic (non-AI) L3 rows as fixed."""
+    now = datetime.now(timezone.utc)
+    prev_open = _make_finding(
+        status=FindingStatus.existing,
+        fingerprint="fp-det",
+        created_at=now - timedelta(days=1),
+        ai_verdict=None,
+    )
+    prev_open.level = FindingLevel.L3
+    repo = _StubFindingRepo([prev_open])
+    service = FindingHistoryService(repo)  # type: ignore[arg-type]
+
+    fixed_rows = asyncio.run(
+        service.apply_status_lifecycle(
+            account_id=uuid4(),
+            audit_id=uuid4(),
+            level=None,
+            current_findings=[],
+            require_ai_verdict_for_previous=True,
+        )
+    )
+    assert len(fixed_rows) == 0
+
+
+def test_ai_lifecycle_closes_missing_ai_finding() -> None:
+    now = datetime.now(timezone.utc)
+    prev_open = _make_finding(
+        status=FindingStatus.existing,
+        fingerprint="fp-ai",
+        created_at=now - timedelta(days=1),
+        ai_verdict={"ok": True},
+    )
+    repo = _StubFindingRepo([prev_open])
+    service = FindingHistoryService(repo)  # type: ignore[arg-type]
+
+    fixed_rows = asyncio.run(
+        service.apply_status_lifecycle(
+            account_id=uuid4(),
+            audit_id=uuid4(),
+            level=None,
+            current_findings=[],
+            require_ai_verdict_for_previous=True,
         )
     )
     assert len(fixed_rows) == 1

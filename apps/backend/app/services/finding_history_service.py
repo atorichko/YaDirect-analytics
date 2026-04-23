@@ -18,15 +18,17 @@ class FindingHistoryService:
         *,
         account_id: UUID,
         audit_id: UUID,
-        level: FindingLevel,
+        level: FindingLevel | None,
         campaign_external_id: str | None = None,
         current_findings: list[Finding],
+        require_ai_verdict_for_previous: bool = False,
     ) -> list[Finding]:
         previous = await self._finding_repo.list_by_account(
             account_id=account_id,
             exclude_audit_id=audit_id,
             level=level,
             campaign_external_id=campaign_external_id,
+            require_ai_verdict=True if require_ai_verdict_for_previous else None,
         )
         latest_by_fingerprint: dict[str, Finding] = {}
         for row in previous:

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { SiteHelpLink } from "@/components/site-help-link";
 import { Button } from "@/components/ui/button";
 import type { AdAccount, Me } from "@/features/dashboard/types";
 import { clearSession, getAccessToken } from "@/lib/auth";
@@ -101,7 +102,8 @@ export default function DashboardPage() {
             </p>
           ) : null}
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <SiteHelpLink />
           {me?.role === "admin" ? (
             <Button variant="secondary" asChild>
               <Link href="/settings">Настройки</Link>
