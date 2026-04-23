@@ -6,6 +6,39 @@ from tests.fixture_loader import (
 )
 
 
+def test_campaign_without_metrika_counter_rule() -> None:
+    rule = build_l2_rule_registry()["CAMPAIGN_WITHOUT_METRIKA_COUNTER"]
+    ctx = L2Context(
+        account_id="acc1",
+        campaigns=[{"id": "c1", "status": "active", "metrika_counter_id": None}],
+    )
+    assert len(rule(ctx, {})) == 1
+    ctx_ok = L2Context(
+        account_id="acc1",
+        campaigns=[{"id": "c1", "status": "active", "metrika_counter_id": "123"}],
+    )
+    assert rule(ctx_ok, {}) == []
+
+
+def test_campaign_without_metrika_goals_rule() -> None:
+    rule = build_l2_rule_registry()["CAMPAIGN_WITHOUT_METRIKA_GOALS"]
+    ctx = L2Context(
+        account_id="acc1",
+        campaigns=[{"id": "c1", "status": "ON", "metrika_counter_id": "999", "goal_ids": []}],
+    )
+    assert len(rule(ctx, {})) == 1
+    ctx_no_counter = L2Context(
+        account_id="acc1",
+        campaigns=[{"id": "c1", "status": "active", "metrika_counter_id": None, "goal_ids": []}],
+    )
+    assert rule(ctx_no_counter, {}) == []
+    ctx_ok = L2Context(
+        account_id="acc1",
+        campaigns=[{"id": "c1", "status": "active", "metrika_counter_id": "1", "goal_ids": ["g1"]}],
+    )
+    assert rule(ctx_ok, {}) == []
+
+
 def test_conversion_strategy_without_metrika_rule() -> None:
     rule = build_l2_rule_registry()["CONVERSION_STRATEGY_WITHOUT_METRIKA"]
     ctx = L2Context(

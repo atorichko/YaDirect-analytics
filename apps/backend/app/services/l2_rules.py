@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.services.l1_rules import FindingDraft
+from app.services.l1_rules import FindingDraft, _is_active_yandex_campaign
 
 
 @dataclass(slots=True)
@@ -33,6 +33,70 @@ def _goal_is_unavailable(goal: dict[str, Any]) -> bool:
     status = str(goal.get("status") or "").lower()
     access = str(goal.get("access") or "").lower()
     return status in {"deleted", "removed", "archived"} or access in {"revoked", "denied"}
+
+
+def _campaign_without_metrika_counter(ctx: L2Context, rule: dict[str, Any]) -> list[FindingDraft]:
+    """Активная кампания без привязанного счётчика Яндекс Метрики (любая стратегия)."""
+    out: list[FindingDraft] = []
+    for campaign in ctx.campaigns:
+        if not _is_active_yandex_campaign(campaign):
+            continue
+        if not _metrika_counter_missing(campaign.get("metrika_counter_id")):
+            continue
+        campaign_id = str(campaign.get("id"))
+        out.append(
+            FindingDraft(
+                entity_key=f"campaign:{campaign_id}:no_metrika_counter",
+                issue_location=f"campaign:{campaign_id}",
+                campaign_external_id=campaign_id,
+                group_external_id=None,
+                ad_external_id=None,
+                evidence={
+                    "campaign_id": campaign_id,
+                    "campaign_name": campaign.get("name"),
+                    "metrika_counter_id": campaign.get("metrika_counter_id"),
+                    "strategy_type": campaign.get("strategy_type"),
+                },
+                impact_ru="В настройках кампании не подключён счётчик Яндекс Метрики — теряются атрибуция и данные для анализа и оптимизации.",
+                recommendation_ru=rule.get("recommendation_ru", "Подключите счётчик Метрики в настройках кампании."),
+            )
+        )
+    return out
+
+
+def _campaign_without_metrika_goals(ctx: L2Context, rule: dict[str, Any]) -> list[FindingDraft]:
+    """Счётчик задан, но цели Метрики к кампании не добавлены."""
+    out: list[FindingDraft] = []
+    for campaign in ctx.campaigns:
+        if not _is_active_yandex_campaign(campaign):
+            continue
+        if _metrika_counter_missing(campaign.get("metrika_counter_id")):
+            continue
+        goal_ids = campaign.get("goal_ids")
+        if isinstance(goal_ids, list) and len(goal_ids) > 0:
+            continue
+        campaign_id = str(campaign.get("id"))
+        out.append(
+            FindingDraft(
+                entity_key=f"campaign:{campaign_id}:no_metrika_goals",
+                issue_location=f"campaign:{campaign_id}",
+                campaign_external_id=campaign_id,
+                group_external_id=None,
+                ad_external_id=None,
+                evidence={
+                    "campaign_id": campaign_id,
+                    "campaign_name": campaign.get("name"),
+                    "metrika_counter_id": campaign.get("metrika_counter_id"),
+                    "goal_ids": goal_ids if isinstance(goal_ids, list) else [],
+                },
+                impact_ru="Цели Яндекс Метрики не добавлены в кампанию — неполные данные по конверсиям и ограниченные возможности отчётности.",
+                recommendation_ru=rule.get(
+                    "recommendation_ru",
+                    "Добавьте в кампанию цели Метрики, соответствующие вашим KPI.",
+                ),
+            )
+        )
+    return out
 
 
 def _conversion_strategy_without_metrika(ctx: L2Context, rule: dict[str, Any]) -> list[FindingDraft]:
@@ -190,6 +254,8 @@ def _campaign_chronic_budget_limit(ctx: L2Context, rule: dict[str, Any]) -> list
 
 def build_l2_rule_registry() -> dict[str, L2RuleHandler]:
     return {
+        "CAMPAIGN_WITHOUT_METRIKA_COUNTER": _campaign_without_metrika_counter,
+        "CAMPAIGN_WITHOUT_METRIKA_GOALS": _campaign_without_metrika_goals,
         "CONVERSION_STRATEGY_WITHOUT_METRIKA": _conversion_strategy_without_metrika,
         "CONVERSION_STRATEGY_WITHOUT_GOAL": _conversion_strategy_without_goal,
         "CONVERSION_STRATEGY_WITH_UNAVAILABLE_GOAL": _conversion_strategy_with_unavailable_goal,

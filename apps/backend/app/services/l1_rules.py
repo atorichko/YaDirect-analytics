@@ -38,6 +38,50 @@ def _is_active(value: Any) -> bool:
     return str(value or "").lower() in {"active", "on", "enabled"}
 
 
+def _is_active_yandex_campaign(campaign: dict[str, Any]) -> bool:
+    """Direct API stores campaign serving state in `State` (mapped to `status` in snapshots)."""
+    st = str(campaign.get("status") or campaign.get("state") or "").lower()
+    return st in {"on", "active", "enabled", "yes", "converted"}
+
+
+def _is_servable_ad_group(group: dict[str, Any]) -> bool:
+    """
+    Yandex Direct AdGroup moderation `Status`: ACCEPTED / PREACCEPTED mean the group can serve;
+    DRAFT / MODERATION / REJECTED do not. Fixture data uses active/paused.
+    """
+    raw = str(group.get("status") or "").strip().lower()
+    if raw in {"accepted", "preaccepted"}:
+        return True
+    if raw in {"draft", "moderation", "premoderation", "rejected"}:
+        return False
+    return _is_active(group.get("status"))
+
+
+def _is_servable_yandex_ad(ad: dict[str, Any]) -> bool:
+    """Ads use `State` (ON/OFF/…) and `Status` (ACCEPTED/…) in API v5."""
+    state = str(ad.get("state") or "").strip().lower()
+    if state in {"off", "suspended", "archived", "deleted"}:
+        return False
+    if state in {"on", "yes", "active", "enabled"}:
+        return True
+    status = str(ad.get("status") or "").strip().lower()
+    if status in {"accepted"}:
+        return True
+    return _is_active(ad.get("status")) or _is_active(ad.get("state"))
+
+
+def _is_servable_yandex_keyword(keyword: dict[str, Any]) -> bool:
+    state = str(keyword.get("state") or "").strip().lower()
+    if state in {"off", "suspended", "archived", "deleted"}:
+        return False
+    if state in {"on", "yes", "active", "enabled"}:
+        return True
+    status = str(keyword.get("status") or "").strip().lower()
+    if status in {"accepted"}:
+        return True
+    return _is_active(keyword.get("status")) or _is_active(keyword.get("state"))
+
+
 def _normalize_keyword(text: str) -> str:
     raw_tokens = [item for item in str(text).lower().split() if item]
     positive: list[str] = []
@@ -81,6 +125,67 @@ def _negative_tokens(items: Any) -> set[str]:
     return out
 
 
+def _geo_setting_tokens(geo_list: Any) -> set[str]:
+    """Normalized tokens from campaign geo settings (names, region labels in snapshots)."""
+    if not isinstance(geo_list, list):
+        return set()
+    out: set[str] = set()
+    for item in geo_list:
+        s = str(item).lower()
+        for part in re.split(r"[^\wа-яА-Я0-9]+", s):
+            t = re.sub(r"[^\wа-яА-Я0-9]", "", part)
+            if len(t) >= 2:
+                out.add(t)
+    return out
+
+
+def _campaign_geo_overlaps_campaign_negatives(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
+    """Минус-слова кампании совпадают с токенами геотаргетинга (или вхождение в строку гео)."""
+    out: list[FindingDraft] = []
+    for campaign in ctx.campaigns:
+        if not _is_active_yandex_campaign(campaign):
+            continue
+        geo = campaign.get("geo") or []
+        negatives = _negative_tokens(campaign.get("negative_keywords"))
+        if not negatives:
+            continue
+        geo_tokens = _geo_setting_tokens(geo)
+        geo_strings = [str(g).lower() for g in geo] if isinstance(geo, list) else []
+        overlap = set(geo_tokens) & negatives
+        for n in negatives:
+            if len(n) < 2:
+                continue
+            for gs in geo_strings:
+                compact = re.sub(r"[^\wа-яА-Я0-9]+", "", gs)
+                if n in gs or (compact and n in compact):
+                    overlap.add(n)
+                    break
+        if not overlap:
+            continue
+        campaign_id = str(campaign.get("id"))
+        out.append(
+            FindingDraft(
+                entity_key=f"campaign:{campaign_id}:geo_negative_overlap",
+                issue_location=f"campaign:{campaign_id}",
+                campaign_external_id=campaign_id,
+                group_external_id=None,
+                ad_external_id=None,
+                evidence={
+                    "campaign_id": campaign_id,
+                    "campaign_name": campaign.get("name"),
+                    "campaign_geo": geo,
+                    "overlap_tokens": sorted(overlap),
+                },
+                impact_ru="Минус-слова кампании пересекаются с настройками геотаргетинга: часть целевой аудитории может быть отсечена или логика противоречит сама себе.",
+                recommendation_ru=rule.get(
+                    "recommendation_ru",
+                    "Уберите конфликтующие минус-слова или скорректируйте геотаргетинг.",
+                ),
+            )
+        )
+    return out
+
+
 def _active_campaign_without_active_groups(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
     groups_by_campaign: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for group in ctx.groups:
@@ -88,10 +193,11 @@ def _active_campaign_without_active_groups(ctx: L1Context, rule: dict[str, Any])
 
     output: list[FindingDraft] = []
     for campaign in ctx.campaigns:
-        if not _is_active(campaign.get("status")):
+        if not _is_active_yandex_campaign(campaign):
             continue
         campaign_id = str(campaign.get("id"))
-        active_groups = [g for g in groups_by_campaign.get(campaign_id, []) if _is_active(g.get("status"))]
+        campaign_groups = groups_by_campaign.get(campaign_id, [])
+        active_groups = [g for g in campaign_groups if _is_servable_ad_group(g)]
         if active_groups:
             continue
         output.append(
@@ -105,6 +211,15 @@ def _active_campaign_without_active_groups(ctx: L1Context, rule: dict[str, Any])
                     "campaign_id": campaign_id,
                     "campaign_name": campaign.get("name"),
                     "active_group_count": 0,
+                    "groups_in_snapshot": [
+                        {
+                            "group_id": g.get("id"),
+                            "group_name": g.get("name"),
+                            "status": g.get("status"),
+                            "serving_status": g.get("serving_status"),
+                        }
+                        for g in campaign_groups
+                    ],
                 },
                 impact_ru="Кампания активна, но показы фактически не работают из-за отсутствия активных групп.",
                 recommendation_ru=rule.get("recommendation_ru", "Остановить кампанию или добавить рабочие группы."),
@@ -120,10 +235,10 @@ def _active_group_without_active_ads(ctx: L1Context, rule: dict[str, Any]) -> li
 
     output: list[FindingDraft] = []
     for group in ctx.groups:
-        if not _is_active(group.get("status")):
+        if not _is_servable_ad_group(group):
             continue
         group_id = str(group.get("id"))
-        active_ads = [ad for ad in ads_by_group.get(group_id, []) if _is_active(ad.get("status"))]
+        active_ads = [ad for ad in ads_by_group.get(group_id, []) if _is_servable_yandex_ad(ad)]
         if active_ads:
             continue
         output.append(
@@ -153,10 +268,10 @@ def _active_group_without_targeting(ctx: L1Context, rule: dict[str, Any]) -> lis
 
     output: list[FindingDraft] = []
     for group in ctx.groups:
-        if not _is_active(group.get("status")):
+        if not _is_servable_ad_group(group):
             continue
         group_id = str(group.get("id"))
-        active_keywords = [kw for kw in keywords_by_group.get(group_id, []) if _is_active(kw.get("status"))]
+        active_keywords = [kw for kw in keywords_by_group.get(group_id, []) if _is_servable_yandex_keyword(kw)]
         if active_keywords:
             continue
         output.append(
@@ -226,7 +341,7 @@ _YEAR_RE = re.compile(r"\b(20\d{2})\b")
 def _unresolved_placeholder_in_text(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
     output: list[FindingDraft] = []
     for ad in ctx.ads:
-        if not _is_active(ad.get("status")):
+        if not _is_servable_yandex_ad(ad):
             continue
         text_fields = [str(ad.get("title") or ""), str(ad.get("text") or "")]
         joined = " ".join(text_fields)
@@ -259,7 +374,7 @@ def _unresolved_placeholder_in_text(ctx: L1Context, rule: dict[str, Any]) -> lis
 def _duplicate_ads(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
     by_group: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
     for ad in ctx.ads:
-        if not _is_active(ad.get("status")):
+        if not _is_servable_yandex_ad(ad):
             continue
         group_id = str(ad.get("ad_group_id"))
         signature = "|".join(
@@ -300,7 +415,7 @@ def _duplicate_ads(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
 def _duplicate_sitelinks(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
     out: list[FindingDraft] = []
     for ad in ctx.ads:
-        if not _is_active(ad.get("status")):
+        if not _is_servable_yandex_ad(ad):
             continue
         sitelinks = ad.get("sitelinks")
         if not isinstance(sitelinks, list) or len(sitelinks) < 2:
@@ -344,7 +459,7 @@ def _keyword_conflicts_with_group_negatives(ctx: L1Context, rule: dict[str, Any]
     groups = {str(g.get("id")): g for g in ctx.groups}
     out: list[FindingDraft] = []
     for keyword in ctx.keywords:
-        if not _is_active(keyword.get("status")):
+        if not _is_servable_yandex_keyword(keyword):
             continue
         group_id = str(keyword.get("ad_group_id"))
         group = groups.get(group_id)
@@ -382,7 +497,7 @@ def _keyword_conflicts_with_campaign_negatives(ctx: L1Context, rule: dict[str, A
     campaigns = {str(c.get("id")): c for c in ctx.campaigns}
     out: list[FindingDraft] = []
     for keyword in ctx.keywords:
-        if not _is_active(keyword.get("status")):
+        if not _is_servable_yandex_keyword(keyword):
             continue
         campaign_id = str(keyword.get("campaign_id"))
         campaign = campaigns.get(campaign_id)
@@ -422,7 +537,7 @@ def _missing_required_extensions(ctx: L1Context, rule: dict[str, Any]) -> list[F
         required = ["sitelinks", "callouts", "display_url", "contact_info", "image"]
     out: list[FindingDraft] = []
     for ad in ctx.ads:
-        if not _is_active(ad.get("status")):
+        if not _is_servable_yandex_ad(ad):
             continue
         missing: list[str] = []
         for key in required:
@@ -451,7 +566,7 @@ def _missing_required_extensions(ctx: L1Context, rule: dict[str, Any]) -> list[F
 def _active_ad_rejected_or_restricted(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
     out: list[FindingDraft] = []
     for ad in ctx.ads:
-        if not _is_active(ad.get("status")):
+        if not _is_servable_yandex_ad(ad):
             continue
         moderation = str(ad.get("moderation_status") or "").lower()
         serving = str(ad.get("serving_status") or "").lower()
@@ -482,10 +597,10 @@ def _group_all_ads_rejected(ctx: L1Context, rule: dict[str, Any]) -> list[Findin
         by_group[str(ad.get("ad_group_id"))].append(ad)
     out: list[FindingDraft] = []
     for group in ctx.groups:
-        if not _is_active(group.get("status")):
+        if not _is_servable_ad_group(group):
             continue
         group_id = str(group.get("id"))
-        ads = [a for a in by_group.get(group_id, []) if _is_active(a.get("status"))]
+        ads = [a for a in by_group.get(group_id, []) if _is_servable_yandex_ad(a)]
         if not ads:
             continue
         all_rejected = True
@@ -520,7 +635,7 @@ def _expired_date_in_ad_text(ctx: L1Context, rule: dict[str, Any]) -> list[Findi
     now = datetime.now(timezone.utc).date()
     out: list[FindingDraft] = []
     for ad in ctx.ads:
-        if not _is_active(ad.get("status")):
+        if not _is_servable_yandex_ad(ad):
             continue
         text = f"{ad.get('title') or ''} {ad.get('text') or ''}"
         for match in _DATE_RE.finditer(text):
@@ -592,7 +707,7 @@ def _past_year_in_text(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraf
     current_year = datetime.now(timezone.utc).year
     out: list[FindingDraft] = []
     for ad in ctx.ads:
-        if not _is_active(ad.get("status")):
+        if not _is_servable_yandex_ad(ad):
             continue
         text = f"{ad.get('title') or ''} {ad.get('text') or ''}"
         years = sorted({int(m.group(1)) for m in _YEAR_RE.finditer(text)})
@@ -617,7 +732,7 @@ def _past_year_in_text(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraf
 def _duplicate_keywords_with_overlap(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
     by_group: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for kw in ctx.keywords:
-        if _is_active(kw.get("status")):
+        if _is_servable_yandex_keyword(kw):
             by_group[str(kw.get("ad_group_id"))].append(kw)
     out: list[FindingDraft] = []
     for group_id, kws in by_group.items():
@@ -666,7 +781,7 @@ def _group_keyword_overlap(ctx: L1Context, rule: dict[str, Any]) -> list[Finding
     group_meta = {str(g.get("id")): g for g in ctx.groups}
     by_campaign_group: dict[str, dict[str, set[str]]] = defaultdict(dict)
     for kw in ctx.keywords:
-        if not _is_active(kw.get("status")):
+        if not _is_servable_yandex_keyword(kw):
             continue
         campaign_id = str(kw.get("campaign_id"))
         group_id = str(kw.get("ad_group_id"))
@@ -708,10 +823,10 @@ def _group_keyword_overlap(ctx: L1Context, rule: dict[str, Any]) -> list[Finding
 
 
 def _missing_cross_negatives(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
-    groups = [g for g in ctx.groups if _is_active(g.get("status"))]
+    groups = [g for g in ctx.groups if _is_servable_ad_group(g)]
     keywords_by_group: dict[str, set[str]] = defaultdict(set)
     for kw in ctx.keywords:
-        if not _is_active(kw.get("status")):
+        if not _is_servable_yandex_keyword(kw):
             continue
         group_id = str(kw.get("ad_group_id"))
         keywords_by_group[group_id] |= _keyword_positive_tokens(str(kw.get("phrase") or kw.get("text") or ""))
@@ -761,11 +876,11 @@ def _missing_cross_negatives(ctx: L1Context, rule: dict[str, Any]) -> list[Findi
 def _campaign_self_competition_by_geo_and_semantics(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
     campaign_keywords: dict[str, set[str]] = defaultdict(set)
     for kw in ctx.keywords:
-        if not _is_active(kw.get("status")):
+        if not _is_servable_yandex_keyword(kw):
             continue
         campaign_id = str(kw.get("campaign_id"))
         campaign_keywords[campaign_id].add(_normalize_keyword(str(kw.get("phrase") or kw.get("text") or "")))
-    campaigns = [c for c in ctx.campaigns if _is_active(c.get("status"))]
+    campaigns = [c for c in ctx.campaigns if _is_active_yandex_campaign(c)]
     out: list[FindingDraft] = []
     for i in range(len(campaigns)):
         left = campaigns[i]
@@ -813,7 +928,7 @@ def _geo_text_targeting_mismatch(ctx: L1Context, rule: dict[str, Any]) -> list[F
     campaigns = {str(c.get("id")): c for c in ctx.campaigns}
     out: list[FindingDraft] = []
     for ad in ctx.ads:
-        if not _is_active(ad.get("status")):
+        if not _is_servable_yandex_ad(ad):
             continue
         campaign_id = str(ad.get("campaign_id"))
         campaign = campaigns.get(campaign_id)
@@ -858,6 +973,7 @@ def build_l1_rule_registry() -> dict[str, RuleHandler]:
         "GROUP_KEYWORD_OVERLAP": _group_keyword_overlap,
         "MISSING_CROSS_NEGATIVES": _missing_cross_negatives,
         "CAMPAIGN_SELF_COMPETITION_BY_GEO_AND_SEMANTICS": _campaign_self_competition_by_geo_and_semantics,
+        "CAMPAIGN_GEO_OVERLAPS_CAMPAIGN_NEGATIVES": _campaign_geo_overlaps_campaign_negatives,
         "GEO_TEXT_TARGETING_MISMATCH": _geo_text_targeting_mismatch,
         "KEYWORD_CONFLICTS_WITH_GROUP_NEGATIVES": _keyword_conflicts_with_group_negatives,
         "KEYWORD_CONFLICTS_WITH_CAMPAIGN_NEGATIVES": _keyword_conflicts_with_campaign_negatives,

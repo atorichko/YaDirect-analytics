@@ -292,6 +292,19 @@
       "recommendation_ru": "Развести кампании по регионам, времени, устройствам или семантике."
     },
     {
+      "rule_code": "CAMPAIGN_GEO_OVERLAPS_CAMPAIGN_NEGATIVES",
+      "name_ru": "Настройки гео пересечены с минус-словом кампании",
+      "applies_to": ["all"],
+      "severity": "high",
+      "level": "L1",
+      "entity_type": "campaign",
+      "inputs": ["campaign.geo[]", "campaign.negative_keywords[]"],
+      "detection_logic": "intersection of normalized geo tokens and campaign negative tokens, or negative substring of geo label",
+      "fail_condition": "campaign_geo_tokens_overlap_campaign_negatives",
+      "evidence_fields": ["campaign_id", "campaign_geo", "overlap_tokens"],
+      "recommendation_ru": "Уберите конфликтующие минус-слова или скорректируйте геотаргетинг."
+    },
+    {
       "rule_code": "CONVERSION_STRATEGY_WITHOUT_METRIKA",
       "name_ru": "Стратегия по конверсиям без счетчика Метрики",
       "applies_to": ["all"],
@@ -355,6 +368,32 @@
       "fail_condition": "campaign_regularly_budget_limited",
       "evidence_fields": ["campaign_id", "analysis_period_days", "budget_limited_days", "avg_hour_of_budget_exhaustion"],
       "recommendation_ru": "Увеличить бюджет или перераспределить трафик."
+    },
+    {
+      "rule_code": "CAMPAIGN_WITHOUT_METRIKA_COUNTER",
+      "name_ru": "Яндекс Метрика не подключена в настройках кампании",
+      "applies_to": ["all"],
+      "severity": "high",
+      "level": "L2",
+      "entity_type": "campaign",
+      "inputs": ["campaign.status", "campaign.metrika_counter_id"],
+      "detection_logic": "campaign is active AND metrika_counter_id is null or empty",
+      "fail_condition": "active_campaign_without_metrika_counter",
+      "evidence_fields": ["campaign_id", "metrika_counter_id", "strategy_type"],
+      "recommendation_ru": "Подключите счётчик Яндекс Метрики в настройках кампании."
+    },
+    {
+      "rule_code": "CAMPAIGN_WITHOUT_METRIKA_GOALS",
+      "name_ru": "Цели Яндекс Метрики не добавлены в кампанию",
+      "applies_to": ["all"],
+      "severity": "high",
+      "level": "L2",
+      "entity_type": "campaign",
+      "inputs": ["campaign.metrika_counter_id", "campaign.goal_ids[]"],
+      "detection_logic": "metrika_counter_id is set AND count(goal_ids)=0",
+      "fail_condition": "campaign_with_counter_but_no_goals",
+      "evidence_fields": ["campaign_id", "metrika_counter_id", "goal_ids"],
+      "recommendation_ru": "Добавьте в кампанию цели Метрики."
     },
     {
       "rule_code": "INVALID_URL_SYNTAX",
