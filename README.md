@@ -1,38 +1,37 @@
-# Yandex Direct Audit (MVP)
+# YaDirect Analytics (MVP)
 
-Monorepo: FastAPI backend + Next.js frontend + Docker Compose for local development.
+Monorepo: FastAPI + Next.js + Docker Compose. Репозиторий: [YaDirect-analytics](https://github.com/atorichko/YaDirect-analytics).
 
-**Hosting note:** this repo does not modify system nginx. On a shared host, add a dedicated `server` or `location` for this app only — see `infra/nginx/README.shared-hosting.md`.
+**Общий nginx на VDS:** правьте только свой фрагмент `location`, не трогайте чужие проекты. См. `infra/nginx/README.shared-hosting.md` и `infra/nginx/atorichko.asur-adigital.ru-locations.conf.example`.
+
+Публичный URL (path deploy): `https://atorichko.asur-adigital.ru/YaDirect-analytics/` — в `.env` на сервере задайте `NEXT_PUBLIC_BASE_PATH=/YaDirect-analytics` и `NEXT_PUBLIC_API_V1_URL=https://atorichko.asur-adigital.ru/YaDirect-analytics/api/v1`.
 
 ## Quick start (Docker)
 
 ```bash
+cd /root/YaDirect-analytics   # или ваш путь к клону
 cp env.example .env
-docker compose up --build
+docker compose up --build -d db redis
+docker compose run --rm backend alembic upgrade head
+docker compose run --rm backend python scripts/seed_admin.py
+docker compose up backend worker frontend
 ```
 
-- API: http://localhost:8000/api/v1/docs  
+- API docs: http://localhost:8000/api/v1/docs  
 - Health: http://localhost:8000/api/v1/health  
 - Web: http://localhost:3000  
 
-Postgres is exposed on **5433**, Redis on **6380** (to avoid clashing with other local projects).
+Postgres **5433**, Redis **6380** (снаружи), чтобы не пересекаться с другими сервисами.
 
-## Local backend without Docker
+## Этапы
+
+1. Bootstrap — готово.  
+2. Auth + RBAC — JWT, `admin` / `specialist`, `GET /users/me`, `GET /users` (admin), страницы `/login` и `/dashboard`.
+
+## Тесты (backend)
 
 ```bash
-cd apps/backend
-python -m venv .venv && source .venv/bin/activate
+cd apps/backend && python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-export DATABASE_URL=postgresql+asyncpg://audit:audit@localhost:5433/audit
-uvicorn app.main:app --reload --port 8000
+pytest
 ```
-
-## Local frontend without Docker
-
-```bash
-cd apps/frontend
-npm install
-NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev
-```
-
-Roadmap: 13 этапов в ТЗ; завершён **Этап 1 — Bootstrap**.

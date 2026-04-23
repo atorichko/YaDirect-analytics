@@ -1,0 +1,31 @@
+# Snippet for EXISTING server_name atorichko.asur-adigital.ru (shared nginx).
+# Do not replace the whole server { } — paste only these locations, then:
+#   sudo nginx -t && sudo systemctl reload nginx
+#
+# Public URL (исправлена опечатка в ТЗ: не смешивать с github URL):
+#   https://atorichko.asur-adigital.ru/YaDirect-analytics/
+#
+# Upstreams: adjust ports if your PM2/docker binds elsewhere.
+# Next.js must run with NEXT_PUBLIC_BASE_PATH=/YaDirect-analytics
+# and NEXT_PUBLIC_API_V1_URL=https://atorichko.asur-adigital.ru/YaDirect-analytics/api/v1
+
+# API first — longer prefix wins for /YaDirect-analytics/api/...
+location /YaDirect-analytics/api/ {
+    rewrite ^/YaDirect-analytics/api(/.*)$ $1 break;
+    proxy_pass http://127.0.0.1:8000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+location /YaDirect-analytics/ {
+    proxy_pass http://127.0.0.1:3000/YaDirect-analytics/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}

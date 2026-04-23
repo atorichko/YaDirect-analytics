@@ -4,8 +4,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Yandex Direct Audit",
-  description: "Internal QA for Yandex Direct campaign setup",
+  title: "YaDirect Analytics",
+  description: "Internal Yandex Direct campaign audit",
 };
 
 export default function RootLayout(props: { children: ReactNode }) {

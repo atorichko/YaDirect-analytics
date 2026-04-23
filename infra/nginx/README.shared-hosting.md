@@ -41,3 +41,10 @@ server {
 ```
 
 This file is documentation only; it is **not** mounted or applied by `docker-compose.yml`.
+
+## Path deploy for this project
+
+Готовый фрагмент `location` для домена **atorichko.asur-adigital.ru** и префикса **`/YaDirect-analytics/`**:
+[`atorichko.asur-adigital.ru-locations.conf.example`](./atorichko.asur-adigital.ru-locations.conf.example).
+
+Публичный адрес интерфейса: `https://atorichko.asur-adigital.ru/YaDirect-analytics/` (без вставки URL GitHub в путь).

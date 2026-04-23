@@ -3,7 +3,7 @@ from celery import Celery
 from app.core.config import settings
 
 celery_app = Celery(
-    "yandex_direct_audit",
+    "yadirect_analytics",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
     include=["app.workers.tasks"],
