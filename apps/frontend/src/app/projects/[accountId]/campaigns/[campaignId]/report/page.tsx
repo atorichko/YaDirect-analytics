@@ -71,7 +71,6 @@ const EVIDENCE_LABEL_RU: Record<string, string> = {
   main_domain: "Домен объявления",
   sitelink_urls: "Быстрые ссылки",
   sitelink_domains: "Домены быстрых ссылок (несовпадение)",
-  checked_url: "Проверенный URL",
   utm_param_status: "Статус UTM-параметров",
   utm_issue_details: "Детали ошибок UTM",
   url_syntax_issues: "Проблемы синтаксиса URL",
