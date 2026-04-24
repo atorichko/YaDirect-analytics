@@ -281,6 +281,186 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
     );
   }
 
+  if (row.rule_code === "DUPLICATE_KEYWORDS_IN_GROUP") {
+    type Conflict = { keyword_id: string; phrase: string; minus_tokens: string[] };
+    const byGroup = new Map<
+      string,
+      { groupId: string; groupName: string; duplicates: string[]; conflicts: Conflict[] }
+    >();
+    for (const item of sorted) {
+      const gidRaw = item.group_external_id ?? item.evidence?.group_id;
+      if (!gidRaw) continue;
+      const groupId = String(gidRaw);
+      const groupName = String(item.evidence?.group_name ?? "").trim() || "—";
+      const phrases = (item.evidence?.duplicate_phrases as string[] | undefined) ??
+        (item.evidence?.keywords as string[] | undefined) ?? [];
+      const rawConflicts = (item.evidence?.minus_word_conflicts as Conflict[] | undefined) ?? [];
+      const cur = byGroup.get(groupId) ?? {
+        groupId,
+        groupName,
+        duplicates: [] as string[],
+        conflicts: [] as Conflict[],
+      };
+      cur.duplicates.push(...phrases);
+      cur.conflicts.push(...rawConflicts);
+      byGroup.set(groupId, cur);
+    }
+    const list = Array.from(byGroup.values()).sort((a, b) => a.groupId.localeCompare(b.groupId));
+    return (
+      <>
+        <p className="mt-2 text-xs font-medium text-muted-foreground">Детали:</p>
+        <div className="space-y-3 text-sm text-foreground">
+          {list.map((g) => {
+            const dupUnique = [...new Set(g.duplicates)].sort();
+            const confById = new Map<string, Conflict>();
+            for (const c of g.conflicts) {
+              if (!confById.has(c.keyword_id)) confById.set(c.keyword_id, c);
+            }
+            const confList = [...confById.values()].sort((a, b) => a.keyword_id.localeCompare(b.keyword_id));
+            return (
+              <div key={g.groupId}>
+                <p className="font-medium">
+                  {g.groupId} - {g.groupName}
+                </p>
+                {dupUnique.length > 0 && (
+                  <>
+                    <p className="mt-1 text-muted-foreground">Дубли ключевых фраз:</p>
+                    <ul className="mt-0.5 list-inside list-disc">
+                      {dupUnique.map((p) => (
+                        <li key={p}>«{p}»</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+                {confList.length > 0 && (
+                  <>
+                    <p className="mt-1 text-muted-foreground">Конфликт ключа с минус-словом группы:</p>
+                    <ul className="mt-0.5 list-inside list-disc">
+                      {confList.map((c) => (
+                        <li key={c.keyword_id}>
+                          «{c.phrase}» — минус-слова: {c.minus_tokens.join(", ")}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </>
+    );
+  }
+
+  if (row.rule_code === "DUPLICATE_KEYWORDS_WITH_OVERLAP") {
+    return (
+      <>
+        <p className="mt-2 text-xs font-medium text-muted-foreground">Детали:</p>
+        <ul className="mt-1 list-inside list-disc text-sm text-foreground">
+          {sorted.map((r) => {
+            const ev = r.evidence ?? {};
+            const kind = String(ev.overlap_kind ?? "");
+            const lk = String(ev.left_keyword ?? "");
+            const rk = String(ev.right_keyword ?? "");
+            const lg = String(ev.left_group_id ?? "");
+            const rg = String(ev.right_group_id ?? "");
+            const lc = String(ev.left_campaign_id ?? "");
+            const rc = String(ev.right_campaign_id ?? "");
+            let prefix = "";
+            if (kind === "cross_campaign") prefix = `${lc} ↔ ${rc}: `;
+            else if (kind === "cross_group") prefix = `${lg} ↔ ${rg}: `;
+            else if (lg) prefix = `группа ${lg}: `;
+            return (
+              <li key={r.id}>
+                {prefix}«{lk}» и «{rk}»
+              </li>
+            );
+          })}
+        </ul>
+      </>
+    );
+  }
+
+  if (row.rule_code === "DUPLICATE_ADS") {
+    return (
+      <>
+        <p className="mt-2 text-xs font-medium text-muted-foreground">Детали:</p>
+        <div className="space-y-3 text-sm text-foreground">
+          {sorted.map((item) => {
+            const ev = item.evidence ?? {};
+            const aids = (ev.ad_ids as string[] | undefined) ?? [];
+            const sums = (ev.ads_image_summaries as Array<{ ad_id?: string; caption_ru?: string }> | undefined) ?? [];
+            const sig = ev.duplicate_signature_summary as Record<string, unknown> | undefined;
+            return (
+              <div key={item.id}>
+                <p className="text-muted-foreground">
+                  Объявления: {aids.join(", ")}
+                  {sig?.title != null || sig?.url != null ? (
+                    <span className="block text-xs">
+                      {String(sig.title ?? "")} · {String(sig.url ?? "")}
+                    </span>
+                  ) : null}
+                </p>
+                {sums.length > 0 ? (
+                  <ul className="mt-1 list-inside list-disc">
+                    {sums.map((s, idx) => (
+                      <li key={`${item.id}-${s.ad_id ?? idx}`}>
+                        {String(s.ad_id ?? "")}: {String(s.caption_ru ?? "")}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </>
+    );
+  }
+
+  if (row.rule_code === "DUPLICATE_SITELINKS") {
+    return (
+      <>
+        <p className="mt-2 text-xs font-medium text-muted-foreground">Детали:</p>
+        <div className="space-y-3 text-sm text-foreground">
+          {sorted.map((item) => {
+            const adId = String(item.ad_external_id ?? item.evidence?.ad_id ?? "");
+            const clusters = item.evidence?.duplicate_sitelinks;
+            const lines: string[] = [];
+            if (Array.isArray(clusters)) {
+              for (const cl of clusters) {
+                if (!Array.isArray(cl)) continue;
+                for (const sl of cl) {
+                  if (sl && typeof sl === "object") {
+                    const o = sl as Record<string, unknown>;
+                    const t = String(o.title ?? "").trim();
+                    const u = String(o.url ?? "").trim();
+                    if (t && u) lines.push(`${t} - ${u}`);
+                    else if (u) lines.push(u);
+                    else if (t) lines.push(t);
+                  }
+                }
+              }
+            }
+            const uniq = [...new Set(lines)];
+            return (
+              <div key={item.id}>
+                <p className="font-medium">{adId || "—"}</p>
+                {uniq.length > 0 ? (
+                  <ul className="mt-0.5 list-inside list-disc">
+                    {uniq.map((line, idx) => (
+                      <li key={`${adId}-${idx}-${line.slice(0, 24)}`}>{line}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <p className="mt-2 text-xs font-medium text-muted-foreground">Детали:</p>

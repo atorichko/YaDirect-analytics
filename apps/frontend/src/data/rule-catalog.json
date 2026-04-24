@@ -158,11 +158,11 @@
       "severity": "warning",
       "level": "L1",
       "entity_type": "ad",
-      "inputs": ["ads[].title", "ads[].text", "ads[].url", "ads[].sitelinks[]"],
-      "detection_logic": "normalize ad text fields and compare within group or campaign",
+      "inputs": ["ads[].title", "ads[].text", "ads[].url", "ads[].final_url"],
+      "detection_logic": "Внутри группы: одинаковые «заголовок + текст + основная ссылка» (trim, нижний регистр) и то же изображение по снимку (id из библиотеки, иначе URL, иначе имя). Одинаковый текст, но другой id/имя/URL изображения — не дубль (разные форматы креатива 1:1, 3:4, 16:9 и т.п.). Без изображения у обоих считается одним и тем же «пустым» креативом.",
       "fail_condition": "duplicate_ads_detected",
-      "evidence_fields": ["campaign_id", "group_id", "ad_ids", "normalized_signature"],
-      "recommendation_ru": "Убрать дубли или протестировать разные варианты креативов."
+      "evidence_fields": ["campaign_id", "group_id", "ad_ids", "duplicate_signature_summary", "shared_image_fingerprint", "ads_image_summaries"],
+      "recommendation_ru": "Оставить одно объявление или изменить заголовок, текст или URL так, чтобы связка отличалась."
     },
     {
       "rule_code": "DUPLICATE_SITELINKS",

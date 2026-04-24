@@ -181,11 +181,13 @@ class L1AuditService:
         extensions = extensions_all
         account_campaigns: list[dict] | None = None
         account_keywords: list[dict] | None = None
+        account_groups: list[dict] | None = None
         scoped: str | None = None
         if campaign_external_id:
             scoped = campaign_external_id
             account_campaigns = campaigns_for_competition
             account_keywords = keywords_for_competition
+            account_groups = groups_all
             campaigns = [item for item in campaigns if str(item.get("id")) == campaign_external_id]
             groups = [item for item in groups if str(item.get("campaign_id")) == campaign_external_id]
             ads = [item for item in ads if str(item.get("campaign_id")) == campaign_external_id]
@@ -214,6 +216,7 @@ class L1AuditService:
             extensions=extensions,
             account_campaigns=account_campaigns,
             account_keywords=account_keywords,
+            account_groups=account_groups,
             scoped_campaign_external_id=scoped,
         )
 

@@ -20,6 +20,7 @@ class L1Context:
     # Full-account rows when ctx.campaigns/keywords are scoped to one campaign (cross-campaign rules).
     account_campaigns: list[dict[str, Any]] | None = None
     account_keywords: list[dict[str, Any]] | None = None
+    account_groups: list[dict[str, Any]] | None = None
     scoped_campaign_external_id: str | None = None
 
 
@@ -195,9 +196,111 @@ def _geo_setting_tokens(geo_list: Any) -> set[str]:
     return out
 
 
+GEO_FINGERPRINT_ALL_REGIONS = "geo:all_regions"
+
+
+def _normalize_region_ids_value(raw: Any) -> list[int]:
+    if raw is None:
+        return []
+    if isinstance(raw, dict) and "Items" in raw:
+        raw = raw["Items"]
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    for x in raw:
+        try:
+            out.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _campaign_geo_fingerprint(
+    campaign_id: str,
+    campaigns: list[dict[str, Any]],
+    groups: list[dict[str, Any]],
+) -> set[str]:
+    """Union of human-readable geo labels, their tokens, and Yandex RegionIds (group + campaign)."""
+    camp = next((c for c in campaigns if str(c.get("id")) == campaign_id), None)
+    fp: set[str] = set()
+    if camp is not None:
+        geo_list = camp.get("geo") or []
+        if isinstance(geo_list, list):
+            fp |= _geo_setting_tokens(geo_list)
+            for item in geo_list:
+                s = str(item).strip().lower()
+                if s:
+                    fp.add(f"label:{s}")
+        for rid in _normalize_region_ids_value(camp.get("region_ids")):
+            if rid == 0:
+                fp.add(GEO_FINGERPRINT_ALL_REGIONS)
+            elif rid > 0:
+                fp.add(f"rid:{rid}")
+    for g in groups:
+        if str(g.get("campaign_id")) != campaign_id:
+            continue
+        for rid in _normalize_region_ids_value(g.get("region_ids")):
+            if rid == 0:
+                fp.add(GEO_FINGERPRINT_ALL_REGIONS)
+            elif rid > 0:
+                fp.add(f"rid:{rid}")
+    return fp
+
+
+def _geo_fingerprints_overlap(a: set[str], b: set[str]) -> tuple[bool, set[str]]:
+    """True only if audiences can overlap geographically (shared labels, tokens, or region ids)."""
+    if not a or not b:
+        return False, set()
+    if GEO_FINGERPRINT_ALL_REGIONS in a or GEO_FINGERPRINT_ALL_REGIONS in b:
+        return True, {GEO_FINGERPRINT_ALL_REGIONS}
+    inter = a & b
+    if not inter:
+        return False, set()
+    return True, inter
+
+
+def _campaign_pair_geo_targets_overlap(
+    campaign_id_a: str,
+    campaign_id_b: str,
+    campaigns: list[dict[str, Any]],
+    groups: list[dict[str, Any]],
+) -> tuple[bool, set[str]]:
+    """Whether two campaigns may share geography; unknown/empty geo in snapshots is treated as overlap (conservative)."""
+    if campaign_id_a == campaign_id_b:
+        return True, set()
+    fp_a = _campaign_geo_fingerprint(campaign_id_a, campaigns, groups)
+    fp_b = _campaign_geo_fingerprint(campaign_id_b, campaigns, groups)
+    if not fp_a and not fp_b:
+        return True, {"geo:unknown"}
+    if not fp_a or not fp_b:
+        return True, {"geo:partially_unknown"}
+    return _geo_fingerprints_overlap(fp_a, fp_b)
+
+
+def _groups_for_geo_rules(ctx: L1Context) -> list[dict[str, Any]]:
+    return ctx.account_groups if ctx.account_groups is not None else ctx.groups
+
+
+def _campaign_geo_negatives_tokens(campaign: dict[str, Any], groups: list[dict[str, Any]]) -> set[str]:
+    """Tokens/strings compared to campaign minus-words (labels + region id strings)."""
+    cid = str(campaign.get("id"))
+    geo_list = campaign.get("geo") or []
+    tokens = set(_geo_setting_tokens(geo_list)) if isinstance(geo_list, list) else set()
+    fp = _campaign_geo_fingerprint(cid, [campaign], groups)
+    for x in fp:
+        if x.startswith("label:"):
+            tokens |= _geo_setting_tokens([x.replace("label:", "", 1)])
+        elif x.startswith("rid:") and x != GEO_FINGERPRINT_ALL_REGIONS:
+            rid_part = x.split(":", 1)[-1]
+            if rid_part.isdigit():
+                tokens.add(rid_part)
+    return tokens
+
+
 def _campaign_geo_overlaps_campaign_negatives(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
     """Минус-слова кампании совпадают с токенами геотаргетинга (или вхождение в строку гео)."""
     out: list[FindingDraft] = []
+    groups_src = _groups_for_geo_rules(ctx)
     for campaign in ctx.campaigns:
         if not _is_active_yandex_campaign(campaign):
             continue
@@ -205,7 +308,7 @@ def _campaign_geo_overlaps_campaign_negatives(ctx: L1Context, rule: dict[str, An
         negatives = _negative_tokens(campaign.get("negative_keywords"))
         if not negatives:
             continue
-        geo_tokens = _geo_setting_tokens(geo)
+        geo_tokens = _campaign_geo_negatives_tokens(campaign, groups_src)
         geo_strings = [str(g).lower() for g in geo] if isinstance(geo, list) else []
         overlap = set(geo_tokens) & negatives
         for n in negatives:
@@ -364,10 +467,37 @@ def _duplicate_keywords_in_group(ctx: L1Context, rule: dict[str, Any]) -> list[F
     grouped: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
     group_name_by_id = {str(group.get("id")): group.get("name") for group in ctx.groups}
     for keyword in ctx.keywords:
+        if not _is_servable_yandex_keyword(keyword):
+            continue
         group_id = str(keyword.get("ad_group_id"))
         norm = _normalize_keyword(str(keyword.get("phrase") or keyword.get("text") or ""))
         if norm:
             grouped[group_id][norm].append(keyword)
+
+    groups_by_id = {str(g.get("id")): g for g in ctx.groups}
+    minus_conflicts_by_group: dict[str, list[dict[str, Any]]] = {}
+    for gid, g in groups_by_id.items():
+        negatives = _negative_tokens(g.get("negative_keywords"))
+        if not negatives:
+            continue
+        conflicts: list[dict[str, Any]] = []
+        for keyword in ctx.keywords:
+            if not _is_servable_yandex_keyword(keyword):
+                continue
+            if str(keyword.get("ad_group_id")) != gid:
+                continue
+            phrase = str(keyword.get("phrase") or keyword.get("text") or "")
+            hit = sorted(_keyword_positive_tokens(phrase) & negatives)
+            if hit:
+                conflicts.append(
+                    {
+                        "keyword_id": str(keyword.get("id")),
+                        "phrase": phrase,
+                        "minus_tokens": hit,
+                    }
+                )
+        if conflicts:
+            minus_conflicts_by_group[gid] = conflicts
 
     output: list[FindingDraft] = []
     for group_id, normalized_map in grouped.items():
@@ -375,6 +505,7 @@ def _duplicate_keywords_in_group(ctx: L1Context, rule: dict[str, Any]) -> list[F
             if len(kws) < 2:
                 continue
             sample = kws[0]
+            phrases = sorted(str(item.get("phrase") or item.get("text") or "") for item in kws)
             output.append(
                 FindingDraft(
                     entity_key=f"group:{group_id}:keyword:{norm}",
@@ -387,8 +518,10 @@ def _duplicate_keywords_in_group(ctx: L1Context, rule: dict[str, Any]) -> list[F
                         "group_id": group_id,
                         "group_name": group_name_by_id.get(group_id),
                         "keyword_ids": sorted(str(item.get("id")) for item in kws),
-                        "keywords": sorted(str(item.get("phrase") or item.get("text") or "") for item in kws),
+                        "keywords": phrases,
+                        "duplicate_phrases": phrases,
                         "normalized_keyword": norm,
+                        "minus_word_conflicts": minus_conflicts_by_group.get(group_id, []),
                     },
                     impact_ru="Дубли ключевых фраз создают внутреннюю конкуренцию и размазывают статистику.",
                     recommendation_ru=rule.get("recommendation_ru", "Удалить дублирующиеся ключевые фразы."),
@@ -400,6 +533,96 @@ def _duplicate_keywords_in_group(ctx: L1Context, rule: dict[str, Any]) -> list[F
 _PLACEHOLDER_RE = re.compile(r"(\{\{[^{}]+\}\}|\{[^{}]+\}|%[^%]+%|\[[^\[\]]+\]|<[^<>]+>)")
 _DATE_RE = re.compile(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b")
 _YEAR_RE = re.compile(r"\b(20\d{2})\b")
+
+
+def _ad_image_fingerprint(ad: dict[str, Any]) -> str:
+    """
+    Stable identity for ad image(s). Same title/text/url but different fingerprint => different
+    креативы (1:1, 3:4, …), not duplicates. Empty if no image data.
+    Priority per asset: Id → URL/Href → Name/Title (одно поле на объект, как в библиотеке Директа).
+    """
+    chunks: list[str] = []
+
+    def add(kind: str, value: str) -> None:
+        v = str(value).strip().lower()
+        if v:
+            chunks.append(f"{kind}:{v}")
+
+    def consume_image_obj(raw: Any) -> None:
+        if raw is None:
+            return
+        if isinstance(raw, str):
+            u = raw.strip()
+            if u:
+                add("u", u)
+            return
+        if isinstance(raw, dict):
+            iid = raw.get("id") if raw.get("id") is not None else raw.get("Id")
+            if iid is not None and str(iid).strip():
+                add("id", str(iid))
+                return
+            u = raw.get("url") or raw.get("Url") or raw.get("href") or raw.get("Href")
+            if u is not None and str(u).strip():
+                add("u", str(u).strip())
+                return
+            name = raw.get("name") or raw.get("Name") or raw.get("title") or raw.get("Title")
+            if name is not None and str(name).strip():
+                add("n", str(name).strip())
+            return
+        if isinstance(raw, list):
+            for item in raw:
+                consume_image_obj(item)
+
+    consume_image_obj(ad.get("image"))
+    consume_image_obj(ad.get("images"))
+
+    chunks.sort()
+    return "|".join(chunks)
+
+
+def _ad_image_evidence_summary(ad: dict[str, Any]) -> dict[str, Any]:
+    """Short image description for DUPLICATE_ADS evidence (UI / отчёт)."""
+    ad_id = str(ad.get("id") or "")
+    fp = _ad_image_fingerprint(ad)
+    raw = ad.get("image")
+    if raw is None:
+        raw = ad.get("images")
+    out: dict[str, Any] = {
+        "ad_id": ad_id,
+        "image_fingerprint": fp or None,
+    }
+    if not fp:
+        out["caption_ru"] = "изображение не указано"
+        return out
+    if isinstance(raw, str):
+        u = raw.strip()
+        out["caption_ru"] = f"URL: {u}" if len(u) <= 120 else f"URL: {u[:117]}…"
+        return out
+    if isinstance(raw, dict):
+        parts: list[str] = []
+        iid = raw.get("id") if raw.get("id") is not None else raw.get("Id")
+        name = raw.get("name") or raw.get("Name") or raw.get("title") or raw.get("Title")
+        if iid is not None and str(iid).strip():
+            parts.append(f"id {iid}")
+        if name:
+            parts.append(f"«{name}»")
+        w = raw.get("width") or raw.get("Width")
+        h = raw.get("height") or raw.get("Height")
+        if w and h:
+            parts.append(f"{w}×{h}")
+        ar = raw.get("aspect_ratio") or raw.get("AspectRatio")
+        if ar:
+            parts.append(f"соотн. {ar}")
+        u = raw.get("url") or raw.get("Url") or raw.get("href")
+        if u and not parts:
+            parts.append(f"URL {str(u)[:80]}")
+        out["caption_ru"] = ", ".join(parts) if parts else (fp[:120] if fp else "—")
+        return out
+    if isinstance(raw, list) and raw:
+        out["caption_ru"] = f"несколько изображений ({len(raw)} шт.)"
+        return out
+    out["caption_ru"] = fp[:120]
+    return out
 
 
 def _unresolved_placeholder_in_text(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
@@ -436,30 +659,32 @@ def _unresolved_placeholder_in_text(ctx: L1Context, rule: dict[str, Any]) -> lis
 
 
 def _duplicate_ads(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
-    by_group: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
+    by_group: dict[str, dict[tuple[str, str], list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
     for ad in ctx.ads:
         if not _is_structurally_enabled_yandex_ad(ad):
             continue
         group_id = str(ad.get("ad_group_id"))
-        signature = "|".join(
+        text_sig = "|".join(
             [
                 str(ad.get("title") or "").strip().lower(),
                 str(ad.get("text") or "").strip().lower(),
                 str(ad.get("url") or ad.get("final_url") or "").strip().lower(),
             ]
         )
-        if signature == "||":
+        if text_sig == "||":
             continue
-        by_group[group_id][signature].append(ad)
+        img_fp = _ad_image_fingerprint(ad)
+        by_group[group_id][(text_sig, img_fp)].append(ad)
     out: list[FindingDraft] = []
     for group_id, grouped in by_group.items():
-        for signature, ads in grouped.items():
+        for (text_sig, img_fp), ads in grouped.items():
             if len(ads) < 2:
                 continue
             sample = ads[0]
+            dedupe_key = f"{text_sig}\x1f{img_fp}".encode("utf-8")
             out.append(
                 FindingDraft(
-                    entity_key=f"group:{group_id}:duplicate_ad:{hashlib.sha256(signature.encode('utf-8')).hexdigest()[:16]}",
+                    entity_key=f"group:{group_id}:duplicate_ad:{hashlib.sha256(dedupe_key).hexdigest()[:16]}",
                     issue_location=f"group:{group_id}",
                     campaign_external_id=str(sample.get("campaign_id")),
                     group_external_id=group_id,
@@ -468,9 +693,25 @@ def _duplicate_ads(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
                         "campaign_id": sample.get("campaign_id"),
                         "group_id": group_id,
                         "ad_ids": sorted(str(item.get("id")) for item in ads),
+                        "duplicate_signature_summary": {
+                            "title": str(sample.get("title") or ""),
+                            "text": str(sample.get("text") or ""),
+                            "url": str(sample.get("url") or sample.get("final_url") or ""),
+                        },
+                        "shared_image_fingerprint": img_fp or None,
+                        "ads_image_summaries": [_ad_image_evidence_summary(a) for a in sorted(ads, key=lambda x: str(x.get("id")))],
                     },
-                    impact_ru="В группе есть дубли объявлений, это снижает управляемость и искажает статистику.",
-                    recommendation_ru=rule.get("recommendation_ru", "Оставить одно объявление, остальные удалить или переписать."),
+                    impact_ru=(
+                        "Дубль объявления: в одной группе есть минимум два объявления с одинаковой связкой "
+                        "«заголовок + текст + финальная ссылка» и тем же изображением (по id, URL или названию в снимке). "
+                        "Объявления с одинаковым текстом, но с разными изображениями в библиотеке (другой id/имя/URL) "
+                        "или разными форматами креатива (1:1, 3:4, 16:9 и т.д.) сюда не попадают — это не ошибка. "
+                        "Полные дубли конкурируют в аукционе и путают отчётность."
+                    ),
+                    recommendation_ru=rule.get(
+                        "recommendation_ru",
+                        "Оставить одно объявление или изменить заголовок, текст, ссылку или креатив так, чтобы связка отличалась.",
+                    ),
                 )
             )
     return out
@@ -796,50 +1037,86 @@ def _past_year_in_text(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraf
 
 
 def _duplicate_keywords_with_overlap(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
-    by_group: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for kw in ctx.keywords:
-        if _is_servable_yandex_keyword(kw):
-            by_group[str(kw.get("ad_group_id"))].append(kw)
+    kw_source = ctx.account_keywords if ctx.account_keywords is not None else ctx.keywords
+    kws = [kw for kw in kw_source if _is_servable_yandex_keyword(kw)]
+    kws.sort(key=lambda x: str(x.get("id") or ""))
+    groups_src = _groups_for_geo_rules(ctx)
+    camp_source = ctx.account_campaigns if ctx.account_campaigns is not None else ctx.campaigns
+    campaigns_active = [c for c in camp_source if _is_active_yandex_campaign(c)]
     out: list[FindingDraft] = []
-    for group_id, kws in by_group.items():
-        for i in range(len(kws)):
-            left = kws[i]
-            left_tokens = _keyword_positive_tokens(str(left.get("phrase") or left.get("text") or ""))
-            if not left_tokens:
+    scope = ctx.scoped_campaign_external_id
+    for i in range(len(kws)):
+        left = kws[i]
+        left_id = str(left.get("id") or "")
+        left_phrase = str(left.get("phrase") or left.get("text") or "")
+        left_tokens = _keyword_positive_tokens(left_phrase)
+        if not left_tokens:
+            continue
+        g_left = str(left.get("ad_group_id"))
+        c_left = str(left.get("campaign_id"))
+        for j in range(i + 1, len(kws)):
+            right = kws[j]
+            right_phrase = str(right.get("phrase") or right.get("text") or "")
+            right_tokens = _keyword_positive_tokens(right_phrase)
+            if not right_tokens:
                 continue
-            for j in range(i + 1, len(kws)):
-                right = kws[j]
-                right_tokens = _keyword_positive_tokens(str(right.get("phrase") or right.get("text") or ""))
-                if not right_tokens or left_tokens == right_tokens:
+            g_right = str(right.get("ad_group_id"))
+            c_right = str(right.get("campaign_id"))
+            same_group = g_left == g_right
+            if same_group and left_tokens == right_tokens:
+                continue
+            inter = left_tokens & right_tokens
+            if not inter:
+                continue
+            overlap_ratio = len(inter) / max(1, min(len(left_tokens), len(right_tokens)))
+            if overlap_ratio < 0.7:
+                continue
+            if c_left != c_right:
+                geo_ok, _ = _campaign_pair_geo_targets_overlap(c_left, c_right, campaigns_active, groups_src)
+                if not geo_ok:
                     continue
-                inter = left_tokens & right_tokens
-                if not inter:
-                    continue
-                overlap_ratio = len(inter) / max(1, min(len(left_tokens), len(right_tokens)))
-                if overlap_ratio < 0.7:
-                    continue
-                sample = left
-                out.append(
-                    FindingDraft(
-                        entity_key=f"group:{group_id}:overlap_kw:{left.get('id')}:{right.get('id')}",
-                        issue_location=f"group:{group_id}",
-                        campaign_external_id=str(sample.get("campaign_id")),
-                        group_external_id=group_id,
-                        ad_external_id=None,
-                        evidence={
-                            "campaign_id": sample.get("campaign_id"),
-                            "group_id": group_id,
-                            "left_keyword_id": left.get("id"),
-                            "right_keyword_id": right.get("id"),
-                            "left_keyword": left.get("phrase") or left.get("text"),
-                            "right_keyword": right.get("phrase") or right.get("text"),
-                            "intersection_tokens": sorted(inter),
-                            "overlap_ratio": overlap_ratio,
-                        },
-                        impact_ru="Похожие ключевые фразы частично дублируют спрос и создают внутреннюю конкуренцию.",
-                        recommendation_ru=rule.get("recommendation_ru", "Развести семантику или объединить дублирующие ключи."),
-                    )
+            if same_group:
+                overlap_kind = "intra_group"
+                issue_location = f"group:{g_left}"
+                group_external_id = g_left
+                attach_campaign = c_left
+            elif c_left == c_right:
+                overlap_kind = "cross_group"
+                issue_location = f"campaign:{c_left}"
+                group_external_id = None
+                attach_campaign = c_left
+            else:
+                overlap_kind = "cross_campaign"
+                issue_location = f"account:{ctx.account_id}"
+                group_external_id = None
+                attach_campaign = c_left
+            if scope and (scope == c_left or scope == c_right):
+                attach_campaign = scope
+            kid_a, kid_b = sorted([str(left.get("id")), str(right.get("id"))])
+            out.append(
+                FindingDraft(
+                    entity_key=f"kw_overlap:{kid_a}:{kid_b}",
+                    issue_location=issue_location,
+                    campaign_external_id=attach_campaign,
+                    group_external_id=group_external_id,
+                    ad_external_id=None,
+                    evidence={
+                        "overlap_kind": overlap_kind,
+                        "left_campaign_id": c_left,
+                        "right_campaign_id": c_right,
+                        "left_group_id": g_left,
+                        "right_group_id": g_right,
+                        "left_keyword_id": left.get("id"),
+                        "right_keyword_id": right.get("id"),
+                        "left_keyword": left.get("phrase") or left.get("text"),
+                        "right_keyword": right.get("phrase") or right.get("text"),
+                        "intersection_tokens": sorted(inter),
+                        "overlap_ratio": overlap_ratio,
+                    },
+                    impact_ru="Похожие ключевые фразы частично дублируют спрос и создают внутреннюю конкуренцию (в группе, между группами или между кампаниями с пересекающимся гео).",
+                    recommendation_ru=rule.get("recommendation_ru", "Развести семантику или объединить дублирующие ключи."),
                 )
+            )
     return out
 
 
@@ -942,6 +1219,7 @@ def _missing_cross_negatives(ctx: L1Context, rule: dict[str, Any]) -> list[Findi
 
 def _campaign_self_competition_by_geo_and_semantics(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
     kw_source = ctx.account_keywords if ctx.account_keywords is not None else ctx.keywords
+    groups_src = _groups_for_geo_rules(ctx)
     campaign_keywords: dict[str, set[str]] = defaultdict(set)
     for kw in kw_source:
         if not _is_servable_yandex_keyword(kw):
@@ -958,18 +1236,18 @@ def _campaign_self_competition_by_geo_and_semantics(ctx: L1Context, rule: dict[s
     for i in range(len(campaigns)):
         left = campaigns[i]
         left_id = str(left.get("id"))
-        left_geo = {str(x).strip().lower() for x in (left.get("geo") or [])}
         left_kw = {x for x in campaign_keywords.get(left_id, set()) if x}
-        if not left_geo or not left_kw:
+        if not left_kw:
             continue
         for j in range(i + 1, len(campaigns)):
             right = campaigns[j]
             right_id = str(right.get("id"))
-            right_geo = {str(x).strip().lower() for x in (right.get("geo") or [])}
             right_kw = {x for x in campaign_keywords.get(right_id, set()) if x}
-            geo_overlap = left_geo & right_geo
+            if not right_kw:
+                continue
+            geo_ok, geo_overlap = _campaign_pair_geo_targets_overlap(left_id, right_id, campaigns, groups_src)
             kw_overlap = left_kw & right_kw
-            if not geo_overlap or not kw_overlap:
+            if not geo_ok or not kw_overlap:
                 continue
             lo, hi = sorted([left_id, right_id])
             attach_id = lo
@@ -985,7 +1263,7 @@ def _campaign_self_competition_by_geo_and_semantics(ctx: L1Context, rule: dict[s
                     evidence={
                         "left_campaign_id": left_id,
                         "right_campaign_id": right_id,
-                        "geo_overlap": sorted(geo_overlap),
+                        "geo_overlap": sorted(geo_overlap)[:30],
                         "semantic_overlap_count": len(kw_overlap),
                         "semantic_overlap_examples": sorted(list(kw_overlap))[:10],
                     },
@@ -996,6 +1274,13 @@ def _campaign_self_competition_by_geo_and_semantics(ctx: L1Context, rule: dict[s
     return out
 
 
+# Yandex Direct GeoTree ids for cities covered by `city_aliases` in `_geo_text_targeting_mismatch`.
+_GEO_TEXT_YANDEX_REGION_ID_TO_CITY: dict[int, str] = {
+    213: "москва",
+    2: "санкт-петербург",
+}
+
+
 def _geo_text_targeting_mismatch(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
     # Minimal deterministic detector for current test fixture.
     city_aliases = {
@@ -1003,6 +1288,7 @@ def _geo_text_targeting_mismatch(ctx: L1Context, rule: dict[str, Any]) -> list[F
         "санкт-петербург": {"санкт-петербург", "санкт петербург", "спб", "питер"},
     }
     campaigns = {str(c.get("id")): c for c in ctx.campaigns}
+    groups_src = _groups_for_geo_rules(ctx)
     out: list[FindingDraft] = []
     for ad in ctx.ads:
         if not _is_servable_yandex_ad(ad):
@@ -1012,6 +1298,26 @@ def _geo_text_targeting_mismatch(ctx: L1Context, rule: dict[str, Any]) -> list[F
         if not campaign:
             continue
         campaign_geo_text = " ".join(str(x).lower() for x in (campaign.get("geo") or []))
+        fp = _campaign_geo_fingerprint(campaign_id, [campaign], groups_src)
+        campaign_geo_text += " " + " ".join(
+            x.replace("label:", "", 1) for x in fp if x.startswith("label:")
+        )
+        if GEO_FINGERPRINT_ALL_REGIONS in fp:
+            campaign_geo_text += " " + " ".join(
+                alias for aliases in city_aliases.values() for alias in sorted(aliases)
+            )
+        else:
+            for x in fp:
+                if not x.startswith("rid:") or x == GEO_FINGERPRINT_ALL_REGIONS:
+                    continue
+                rid_part = x.split(":", 1)[-1]
+                if not rid_part.isdigit():
+                    continue
+                canonical = _GEO_TEXT_YANDEX_REGION_ID_TO_CITY.get(int(rid_part))
+                if canonical:
+                    aliases = city_aliases.get(canonical)
+                    if aliases:
+                        campaign_geo_text += " " + " ".join(sorted(aliases))
         ad_text = f"{str(ad.get('title') or '').lower()} {str(ad.get('text') or '').lower()}"
         for canonical, aliases in city_aliases.items():
             mentions_city = any(alias in ad_text for alias in aliases)

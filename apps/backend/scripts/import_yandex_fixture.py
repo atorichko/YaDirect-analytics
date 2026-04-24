@@ -25,6 +25,22 @@ def _hash(data: object) -> str:
     ).hexdigest()
 
 
+def _region_ids_list(raw: object) -> list[int]:
+    if raw is None:
+        return []
+    if isinstance(raw, dict) and "Items" in raw:
+        raw = raw["Items"]
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    for x in raw:
+        try:
+            out.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    return sorted(set(out))
+
+
 def normalize_health(item: dict) -> dict:
     ssl = item.get("ssl_check") or {}
     return {
@@ -68,6 +84,9 @@ async def import_fixture(path: Path) -> dict:
             campaign_id = str(c.get("campaign_id") or "")
             if not campaign_id:
                 continue
+            region_union: list[int] = []
+            for g in c.get("groups", []) or []:
+                region_union.extend(_region_ids_list(g.get("region_ids")))
             c_norm = {
                 "id": campaign_id,
                 "name": c.get("campaign_name"),
@@ -79,6 +98,7 @@ async def import_fixture(path: Path) -> dict:
                 "daily_budget": c.get("daily_budget"),
                 "stats": c.get("stats") or {},
                 "geo": c.get("geo") or [],
+                "region_ids": sorted(set(region_union)),
                 "negative_keywords": c.get("negative_keywords") or [],
             }
             await snapshots.upsert_snapshot(
@@ -103,6 +123,7 @@ async def import_fixture(path: Path) -> dict:
                     "status": g.get("status"),
                     "serving_status": g.get("serving_status"),
                     "autotargeting": g.get("autotargeting"),
+                    "region_ids": _region_ids_list(g.get("region_ids")),
                     "negative_keywords": g.get("negative_keywords") or [],
                     "audiences": g.get("audiences") or [],
                 }

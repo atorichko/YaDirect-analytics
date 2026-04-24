@@ -6,7 +6,8 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote_plus, urlsplit, urlunsplit
 from secrets import token_urlsafe
-from typing import Annotated
+from collections import defaultdict
+from typing import Annotated, Any
 from uuid import UUID
 
 import httpx
@@ -26,6 +27,23 @@ router = APIRouter(prefix="/ad-accounts", tags=["ad-accounts"])
 STATE_TTL_MINUTES = 15
 HTTP_RETRY_ATTEMPTS = 3
 HTTP_RETRY_BACKOFF_SECONDS = 0.7
+
+
+def _normalize_region_ids_for_snapshot(raw: Any) -> list[int]:
+    """Yandex Direct RegionIds list or ``{\"Items\": [...]}`` wrapper → sorted unique ints."""
+    if raw is None:
+        return []
+    if isinstance(raw, dict) and "Items" in raw:
+        raw = raw["Items"]
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    for x in raw:
+        try:
+            out.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    return sorted(set(out))
 
 
 @router.get("", response_model=list[AdAccountOut])
@@ -278,15 +296,46 @@ async def sync_account_campaigns(
     repo = EntitySnapshotRepository(session)
     now = datetime.now(timezone.utc)
     upserted = 0
+    campaign_region_ids: dict[str, set[int]] = defaultdict(set)
+
+    for item in ad_groups:
+        group_id = str(item.get("Id") or "")
+        if not group_id:
+            continue
+        campaign_id_str = str(item.get("CampaignId") or "")
+        region_ids = _normalize_region_ids_for_snapshot(item.get("RegionIds"))
+        campaign_region_ids[campaign_id_str].update(region_ids)
+        normalized = {
+            "id": group_id,
+            "campaign_id": campaign_id_str,
+            "name": item.get("Name"),
+            "status": item.get("Status"),
+            "serving_status": item.get("ServingStatus"),
+            "region_ids": region_ids,
+        }
+        content_hash = hashlib.sha256(
+            json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        await repo.upsert_snapshot(
+            account_id=account_id,
+            entity_type=SnapshotEntityType.ad_group,
+            entity_key=group_id,
+            content_hash=content_hash,
+            raw_snapshot=item,
+            normalized_snapshot=normalized,
+            captured_at=now,
+        )
     for item in campaigns:
         campaign_id = str(item.get("Id") or item.get("id") or "")
         if not campaign_id:
             continue
+        merged_regions = sorted(campaign_region_ids.get(campaign_id, set()))
         normalized = {
             "id": campaign_id,
             "name": item.get("Name"),
             "status": item.get("State"),
             "type": item.get("Type"),
+            "region_ids": merged_regions,
         }
         content_hash = hashlib.sha256(
             json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -301,29 +350,6 @@ async def sync_account_campaigns(
             captured_at=now,
         )
         upserted += 1
-    for item in ad_groups:
-        group_id = str(item.get("Id") or "")
-        if not group_id:
-            continue
-        normalized = {
-            "id": group_id,
-            "campaign_id": str(item.get("CampaignId") or ""),
-            "name": item.get("Name"),
-            "status": item.get("Status"),
-            "serving_status": item.get("ServingStatus"),
-        }
-        content_hash = hashlib.sha256(
-            json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        ).hexdigest()
-        await repo.upsert_snapshot(
-            account_id=account_id,
-            entity_type=SnapshotEntityType.ad_group,
-            entity_key=group_id,
-            content_hash=content_hash,
-            raw_snapshot=item,
-            normalized_snapshot=normalized,
-            captured_at=now,
-        )
     for item in ads:
         ad_id = str(item.get("Id") or "")
         if not ad_id:
@@ -555,7 +581,14 @@ async def _fetch_direct_ad_groups(*, access_token: str, client_login: str, campa
                 "method": "get",
                 "params": {
                     "SelectionCriteria": {"CampaignIds": chunk},
-                    "FieldNames": ["Id", "CampaignId", "Name", "Status", "ServingStatus"],
+                    "FieldNames": [
+                        "Id",
+                        "CampaignId",
+                        "Name",
+                        "Status",
+                        "ServingStatus",
+                        "RegionIds",
+                    ],
                 },
             }
             resp = await _post_with_retry(

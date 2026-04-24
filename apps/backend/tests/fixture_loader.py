@@ -42,6 +42,13 @@ def campaigns_normalized_from_fixture(data: dict[str, Any]) -> list[dict[str, An
         cid = str(c.get("campaign_id") or "")
         if not cid:
             continue
+        region_union: set[int] = set()
+        for g in c.get("groups", []) or []:
+            for rid in g.get("region_ids") or []:
+                try:
+                    region_union.add(int(rid))
+                except (TypeError, ValueError):
+                    continue
         out.append(
             {
                 "id": cid,
@@ -54,6 +61,7 @@ def campaigns_normalized_from_fixture(data: dict[str, Any]) -> list[dict[str, An
                 "daily_budget": c.get("daily_budget"),
                 "stats": c.get("stats") or {},
                 "geo": c.get("geo") or [],
+                "region_ids": sorted(region_union),
                 "negative_keywords": c.get("negative_keywords") or [],
             }
         )
