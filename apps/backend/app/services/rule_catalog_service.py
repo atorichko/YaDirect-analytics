@@ -4,7 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.rule_catalog import RuleCatalog, RuleDefinition
 from app.repositories.rule_catalog import RuleCatalogRepository
-from app.schemas.rule_catalog import CatalogUploadRequest
+from app.schemas.rule_catalog import CatalogUploadRequest, PublishBundledCatalogOut
+from app.services.rule_catalog_bundle import (
+    bump_semver_patch,
+    convert_frontend_catalog_to_api_payload,
+    load_bundled_rule_catalog_raw,
+    resolve_bundled_rule_catalog_path,
+)
 
 
 class RuleCatalogService:
@@ -75,3 +81,58 @@ class RuleCatalogService:
             return None
         rules = await self._repo.list_rules(str(catalog.id))
         return catalog, rules
+
+    async def publish_bundled_catalog(
+        self,
+        *,
+        actor_user_id: UUID,
+        catalog_version_override: str | None = None,
+        activate: bool = True,
+    ) -> PublishBundledCatalogOut:
+        """Загрузить rule-catalog.json с диска (образ/монорепо), при необходимости активировать."""
+        path = resolve_bundled_rule_catalog_path()
+        raw = load_bundled_rule_catalog_raw()
+        platform = str(raw.get("platform") or "yandex_direct")
+        active = await self._repo.get_active(platform)
+        active_ver = active.version if active else None
+
+        if catalog_version_override:
+            versions_to_try = [catalog_version_override.strip()]
+        else:
+            file_ver = str(raw.get("catalog_version") or "1.0.0")
+            ver = file_ver
+            if active_ver and ver == active_ver:
+                ver = bump_semver_patch(ver)
+            versions_to_try = []
+            cur = ver
+            for _ in range(48):
+                versions_to_try.append(cur)
+                cur = bump_semver_patch(cur)
+
+        catalog: RuleCatalog | None = None
+        used_ver: str | None = None
+        for ver_try in versions_to_try:
+            body = convert_frontend_catalog_to_api_payload(raw, ver_try)
+            payload = CatalogUploadRequest.model_validate(body)
+            try:
+                catalog = await self.upload_catalog(payload, actor_user_id)
+                used_ver = ver_try
+                break
+            except ValueError:
+                continue
+
+        if catalog is None or used_ver is None:
+            msg = "Could not allocate a new catalog version (all candidates exist). Pass catalog_version explicitly."
+            raise ValueError(msg)
+
+        activated = False
+        if activate:
+            catalog = await self.activate_catalog(catalog.id)
+            activated = True
+
+        return PublishBundledCatalogOut(
+            catalog_version_used=used_ver,
+            catalog_id=catalog.id,
+            activated=activated,
+            bundle_path=str(path),
+        )

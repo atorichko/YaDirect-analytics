@@ -54,3 +54,17 @@ class CatalogWithRulesOut(CatalogSummaryOut):
     included_levels: list[str] = Field(default_factory=list)
     source_payload: dict
     rules: list[RuleDefinitionOut] = Field(default_factory=list)
+
+
+class PublishBundledCatalogBody(BaseModel):
+    """Тело POST /rule-catalogs/publish-bundled (админ)."""
+
+    activate: bool = True
+    catalog_version: str | None = Field(default=None, max_length=32)
+
+
+class PublishBundledCatalogOut(BaseModel):
+    catalog_version_used: str
+    catalog_id: UUID
+    activated: bool
+    bundle_path: str

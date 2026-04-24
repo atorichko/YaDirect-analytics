@@ -37,6 +37,13 @@ type CoverageResponse = {
   missing_enabled_rules: string[];
 };
 
+type PublishBundledResponse = {
+  catalog_version_used: string;
+  catalog_id: string;
+  activated: boolean;
+  bundle_path: string;
+};
+
 export default function SettingsPage() {
   const [me, setMe] = useState<Me | null>(null);
   const [users, setUsers] = useState<UserItem[]>([]);
@@ -44,6 +51,7 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [catalogPublishBusy, setCatalogPublishBusy] = useState(false);
   const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
 
   const [fullName, setFullName] = useState("");
@@ -196,6 +204,40 @@ export default function SettingsPage() {
       setError("Не удалось сохранить промт.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function publishBundledCatalog() {
+    if (!token) return;
+    if (
+      !confirm(
+        "Загрузить встроенный rule-catalog.json с сервера в базу и сделать его активным? Текущий активный каталог будет снят с публикации и заменён новым.",
+      )
+    ) {
+      return;
+    }
+    setCatalogPublishBusy(true);
+    setError(null);
+    setInfo(null);
+    try {
+      const res = await apiPost<PublishBundledResponse>("/rule-catalogs/publish-bundled", token, {
+        activate: true,
+      });
+      setInfo(
+        `Каталог опубликован: версия ${res.catalog_version_used}. Файл на сервере: ${res.bundle_path}. Активирован: ${
+          res.activated ? "да" : "нет"
+        }.`,
+      );
+      try {
+        const coverageData = await apiGet<CoverageResponse>("/rule-catalogs/active/coverage", token);
+        setCoverage(coverageData);
+      } catch {
+        setCoverage(null);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось опубликовать каталог.");
+    } finally {
+      setCatalogPublishBusy(false);
     }
   }
 
@@ -371,6 +413,23 @@ export default function SettingsPage() {
             Сохранить промт
           </Button>
         </div>
+      </section>
+
+      <section className="rounded border p-4">
+        <h2 className="mb-3 text-lg font-medium">Каталог правил</h2>
+        <p className="mb-3 text-sm text-muted-foreground">
+          На сервере в образе бэкенда уже лежит тот же <code className="rounded bg-muted px-1">rule-catalog.json</code>, что
+          собирается из репозитория. Кнопка ниже загружает его в базу и активирует — без отдельного токена в консоли (достаточно
+          текущей сессии администратора). Если версия в JSON совпадает с уже активной, сервер автоматически поднимет patch-версию
+          (как скрипт <code className="rounded bg-muted px-1">upload_rule_catalog_api.py</code>).
+        </p>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Нестандартный путь к файлу на сервере: переменная окружения <code className="rounded bg-muted px-1">BUNDLED_RULE_CATALOG_PATH</code>{" "}
+          (см. <code className="rounded bg-muted px-1">env.example</code>).
+        </p>
+        <Button type="button" variant="secondary" disabled={catalogPublishBusy || loading} onClick={() => void publishBundledCatalog()}>
+          {catalogPublishBusy ? "Публикация…" : "Опубликовать встроенный каталог и активировать"}
+        </Button>
       </section>
 
       <section className="rounded border p-4">

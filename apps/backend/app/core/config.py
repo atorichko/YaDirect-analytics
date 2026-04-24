@@ -4,6 +4,10 @@ from pathlib import Path
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# OAuth UI return when ui_redirect query is omitted (path-deploy default).
+_YANDEX_OAUTH_UI_FALLBACK = "https://atorichko.asur-adigital.ru/YaDirect-analytics/settings"
+
+
 def _find_repo_root_with_compose() -> Path | None:
     """Monorepo: .../YaDirect-analytics/docker-compose.yml. In Docker image only /app/app — no parents[4]."""
     here = Path(__file__).resolve().parent
@@ -82,11 +86,17 @@ class Settings(BaseSettings):
     yandex_oauth_client_id: str = Field(default="", validation_alias="YANDEX_OAUTH_CLIENT_ID")
     yandex_oauth_client_secret: str = Field(default="", validation_alias="YANDEX_OAUTH_CLIENT_SECRET")
     yandex_oauth_redirect_uri: str = Field(default="", validation_alias="YANDEX_OAUTH_REDIRECT_URI")
+    # Optional: long-lived / dev token for scripts; web OAuth flow uses per-account tokens in DB.
+    yandex_oauth_token: str = Field(default="", validation_alias="YANDEX_OAUTH_TOKEN")
+    # Where to send the browser after successful OAuth if ui_redirect query param is omitted.
+    yandex_oauth_ui_default_redirect: str = Field(default="", validation_alias="YANDEX_OAUTH_UI_DEFAULT_REDIRECT")
     oauth_token_encryption_key: str = Field(default="", validation_alias="OAUTH_TOKEN_ENCRYPTION_KEY")
     sabotage_reopen_window_days: int = Field(default=14, validation_alias="SABOTAGE_REOPEN_WINDOW_DAYS")
     weekly_cron_minute: str = Field(default="0", validation_alias="WEEKLY_CRON_MINUTE")
     weekly_cron_hour: str = Field(default="3", validation_alias="WEEKLY_CRON_HOUR")
     weekly_cron_day_of_week: str = Field(default="1", validation_alias="WEEKLY_CRON_DAY_OF_WEEK")
+    # Optional absolute path to rule-catalog.json for admin "publish bundled" and scripts.
+    bundled_rule_catalog_path: str = Field(default="", validation_alias="BUNDLED_RULE_CATALOG_PATH")
 
     @property
     def cors_origins_list(self) -> list[str]:
@@ -95,6 +105,11 @@ class Settings(BaseSettings):
     @property
     def required_utm_params_list(self) -> list[str]:
         return [item.strip() for item in self.required_utm_params.split(",") if item.strip()]
+
+    def yandex_oauth_ui_return_url(self) -> str:
+        """Browser redirect after OAuth if start flow did not pass ui_redirect."""
+        s = self.yandex_oauth_ui_default_redirect.strip()
+        return s or _YANDEX_OAUTH_UI_FALLBACK
 
     @field_validator("debug", mode="before")
     @classmethod

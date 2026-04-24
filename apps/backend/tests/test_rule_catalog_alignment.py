@@ -1,28 +1,16 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
 from app.services.l1_rules import build_l1_rule_registry
 from app.services.l2_rules import build_l2_rule_registry
 from app.services.l3_rules import build_l3_rule_registry
+from app.services.rule_catalog_bundle import resolve_bundled_rule_catalog_path
 from tests.fixture_loader import load_fixture_dict
 
 
-def _rule_catalog_path() -> Path:
-    """Canonical catalog: apps/frontend/src/data/rule-catalog.json (same as UI)."""
-    here = Path(__file__).resolve()
-    docker_bundle = Path("/app/frontend-data/rule-catalog.json")
-    if docker_bundle.is_file():
-        return docker_bundle
-    for ancestor in here.parents:
-        candidate = ancestor / "apps" / "frontend" / "src" / "data" / "rule-catalog.json"
-        if candidate.is_file():
-            return candidate
-    raise FileNotFoundError(
-        "Could not find apps/frontend/src/data/rule-catalog.json "
-        f"(monorepo checkout or Docker image with /app/frontend-data/rule-catalog.json). Started from {here}"
-    )
+def _rule_catalog_path():
+    """Тот же путь, что для publish-bundled и скрипта загрузки."""
+    return resolve_bundled_rule_catalog_path()
 
 
 def _catalog_rules() -> list[dict]:

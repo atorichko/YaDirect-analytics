@@ -5,7 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, RequireAdmin, get_db
-from app.schemas.rule_catalog import CatalogSummaryOut, CatalogUploadRequest, CatalogWithRulesOut, RuleDefinitionOut
+from app.schemas.rule_catalog import (
+    CatalogSummaryOut,
+    CatalogUploadRequest,
+    CatalogWithRulesOut,
+    PublishBundledCatalogBody,
+    PublishBundledCatalogOut,
+    RuleDefinitionOut,
+)
 from app.services.l1_rules import build_l1_rule_registry
 from app.services.l2_rules import build_l2_rule_registry
 from app.services.l3_rules import build_l3_rule_registry
@@ -41,6 +48,26 @@ async def upload_catalog(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return CatalogSummaryOut.model_validate(catalog)
+
+
+@router.post("/publish-bundled", response_model=PublishBundledCatalogOut, status_code=status.HTTP_201_CREATED)
+async def publish_bundled_catalog(
+    admin: RequireAdmin,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    body: PublishBundledCatalogBody,
+) -> PublishBundledCatalogOut:
+    """Опубликовать rule-catalog.json с диска сервера (образ/путь) и при необходимости активировать (удобно из UI)."""
+    service = RuleCatalogService(session)
+    try:
+        return await service.publish_bundled_catalog(
+            actor_user_id=admin.id,
+            catalog_version_override=body.catalog_version,
+            activate=body.activate,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @router.post("/{catalog_id}/activate", response_model=CatalogSummaryOut)
