@@ -25,7 +25,10 @@ class FindingRepository:
         level: FindingLevel | None = None,
         campaign_external_id: str | None = None,
         require_ai_verdict: bool | None = None,
+        rule_codes: set[str] | None = None,
     ) -> list[Finding]:
+        if rule_codes is not None and not rule_codes:
+            return []
         stmt = select(Finding).where(Finding.account_id == account_id).order_by(Finding.created_at.desc())
         if exclude_audit_id:
             stmt = stmt.where(Finding.audit_id != exclude_audit_id)
@@ -37,6 +40,8 @@ class FindingRepository:
             stmt = stmt.where(Finding.ai_verdict.isnot(None))
         elif require_ai_verdict is False:
             stmt = stmt.where(Finding.ai_verdict.is_(None))
+        if rule_codes:
+            stmt = stmt.where(Finding.rule_code.in_(sorted(rule_codes)))
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 

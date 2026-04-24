@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 class RuleDefinitionIn(BaseModel):
     rule_code: str = Field(min_length=1, max_length=64)
     rule_name: str = Field(min_length=1, max_length=255)
+    rule_description: str | None = Field(default=None, max_length=512)
+    fix_recommendation: str | None = Field(default=None, max_length=4096)
     level: str = Field(pattern="^(L1|L2|L3)$")
     severity: str = Field(pattern="^(warning|high|critical)$")
     check_type: str = Field(pattern="^(deterministic|ai_assisted)$")
@@ -28,6 +30,8 @@ class RuleDefinitionOut(BaseModel):
     id: UUID
     rule_code: str
     rule_name: str
+    rule_description: str | None
+    fix_recommendation: str | None
     level: str
     severity: str
     check_type: str

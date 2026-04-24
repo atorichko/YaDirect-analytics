@@ -59,7 +59,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (typeof document !== "undefined") {
-      document.title = "Настройки | YaDirect Analytics";
+      document.title = "Настройки | Модуль аудита Яндекс Директ";
     }
   }, []);
 
@@ -216,7 +216,7 @@ export default function SettingsPage() {
             <Link href="/handoff">Handoff</Link>
           </Button>
           <Button variant="secondary" asChild>
-            <Link href="/dashboard">Dashboard</Link>
+            <Link href="/dashboard">Главная</Link>
           </Button>
           <Button variant="outline" type="button" onClick={logout}>
             Выйти

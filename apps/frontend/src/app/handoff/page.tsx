@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { SiteHelpLink } from "@/components/site-help-link";
+import { Button } from "@/components/ui/button";
 
 export const metadata: Metadata = {
-  title: "Контекст проекта (handoff)",
+  title: "Handoff | Модуль аудита Яндекс Директ",
   description: "Внутренняя справка по YaDirect-analytics для команды и ИИ",
   robots: { index: false, follow: false },
 };
@@ -10,11 +12,28 @@ export const metadata: Metadata = {
 export default function HandoffPage() {
   return (
     <main className="mx-auto max-w-3xl space-y-10 px-4 py-10 text-sm leading-relaxed md:px-6">
-      <header className="space-y-2 border-b pb-6">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Скрытая страница — только по прямой ссылке
-        </p>
-        <h1 className="text-2xl font-semibold tracking-tight">YaDirect-analytics — контекст для работы</h1>
+      <header className="space-y-3 border-b pb-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Handoff</h1>
+            <p className="text-sm text-muted-foreground">Внутренний контекст проекта и правила эксплуатации.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <SiteHelpLink />
+            <Button variant="secondary" asChild>
+              <Link href="/handoff">Handoff</Link>
+            </Button>
+            <Button variant="secondary" asChild>
+              <Link href="/rules">Правила</Link>
+            </Button>
+            <Button variant="secondary" asChild>
+              <Link href="/settings">Настройки</Link>
+            </Button>
+            <Button variant="secondary" asChild>
+              <Link href="/dashboard">Главная</Link>
+            </Button>
+          </div>
+        </div>
         <p className="text-muted-foreground">
           Кратко по сути (ориентир — «легенда» уровней L1/L2/L3 в{" "}
           <code className="rounded bg-muted px-1 py-0.5 text-xs">temp/легенда.txt</code>
@@ -37,6 +56,10 @@ export default function HandoffPage() {
           проверки, хранить историю находок, корректно считать статусы{" "}
           <code className="rounded bg-muted px-1">new / existing / fixed / reopened</code>, выявлять признаки
           саботажа, выдавать рекомендации и показывать результаты в веб-интерфейсе.
+        </p>
+        <p className="text-muted-foreground">
+          Текущая рабочая конфигурация на проде: deterministic-проверки активны; отдельные AI-assisted правила в активном
+          каталоге могут отсутствовать. При этом AI-этап изолирован и не должен менять lifecycle deterministic-находок.
         </p>
         <ul className="list-inside list-disc space-y-1 text-muted-foreground">
           <li>
@@ -162,7 +185,7 @@ export default function HandoffPage() {
           <li>
             <strong>Единственный файл каталога в git</strong> для UI и для загрузки в API:{" "}
             <code className="rounded bg-muted px-1">apps/frontend/src/data/rule-catalog.json</code>. Отдельные копии
-            вида <code className="rounded bg-muted px-1">каталог правил.json</code> в корне, в{" "}
+            в корне, в{" "}
             <code className="rounded bg-muted px-1">temp/</code> или в{" "}
             <code className="rounded bg-muted px-1">tests/fixtures/</code> <strong>не используются</strong> — удалены,
             чтобы не расходились с фронтом.
@@ -184,11 +207,34 @@ export default function HandoffPage() {
             <code className="rounded bg-muted px-1">GET /api/v1/rule-catalogs/active</code>. Тело запроса загрузки —
             содержимое <code className="rounded bg-muted px-1">rule-catalog.json</code>.
           </li>
+          <li>
+            Поле <code className="rounded bg-muted px-1">check_type</code> хранится в БД в{" "}
+            <code className="rounded bg-muted px-1">rule_definitions</code> (см.{" "}
+            <code className="rounded bg-muted px-1">apps/backend/app/models/rule_catalog.py</code>) и отдается API
+            каталогов. В git-файле <code className="rounded bg-muted px-1">apps/frontend/src/data/rule-catalog.json</code>{" "}
+            поле <code className="rounded bg-muted px-1">check_type</code> сейчас отсутствует, поэтому источник истины
+            для него - только активный каталог в БД.
+          </li>
         </ul>
         <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
           <strong>Обязательно:</strong> после изменений каталога правил на проде нужно{" "}
           <strong>заново загрузить каталог и активировать</strong> его. Иначе новые проверки в коде/JSON{" "}
           <strong>не начнут применяться</strong> в соответствии с обновлённым каталогом в БД.
+        </p>
+        <p className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-emerald-950 dark:text-emerald-100">
+          <strong>Актуальные нюансы lifecycle:</strong> deterministic-проверки (L1/L2/L3) имеют приоритет над AI. AI
+          не может закрыть ошибку, если по тому же <code className="rounded bg-muted px-1">rule_code + entity_key</code>{" "}
+          есть открытая deterministic-находка. Если в активном каталоге нет правил{" "}
+          <code className="rounded bg-muted px-1">check_type=ai_assisted</code>, AI-этап не меняет статусы.
+        </p>
+        <p className="text-muted-foreground">
+          Для карточек правил в БД добавлены поля <code className="rounded bg-muted px-1">rule_description</code> и{" "}
+          <code className="rounded bg-muted px-1">fix_recommendation</code> (таблица{" "}
+          <code className="rounded bg-muted px-1">rule_definitions</code>). Страница{" "}
+          <Link href="/rules" className="text-primary underline-offset-4 hover:underline">
+            /rules
+          </Link>{" "}
+          выводит эти значения как источник описания и рекомендации.
         </p>
       </section>
 

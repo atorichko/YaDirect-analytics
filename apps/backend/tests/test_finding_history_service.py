@@ -18,6 +18,7 @@ class _StubFindingRepo:
         level=None,
         campaign_external_id=None,
         require_ai_verdict=None,
+        rule_codes=None,
     ):
         out = list(self._rows)
         if level is not None:
@@ -26,6 +27,10 @@ class _StubFindingRepo:
             out = [r for r in out if r.ai_verdict is not None]
         elif require_ai_verdict is False:
             out = [r for r in out if r.ai_verdict is None]
+        if rule_codes is not None and not rule_codes:
+            return []
+        if rule_codes:
+            out = [r for r in out if r.rule_code in rule_codes]
         return out
 
 
@@ -139,3 +144,61 @@ def test_ai_lifecycle_closes_missing_ai_finding() -> None:
     )
     assert len(fixed_rows) == 1
     assert fixed_rows[0].status == FindingStatus.fixed
+
+
+def test_ai_lifecycle_respects_allowed_rule_codes() -> None:
+    now = datetime.now(timezone.utc)
+    prev_a = _make_finding(
+        status=FindingStatus.existing,
+        fingerprint="fp-ai-a",
+        created_at=now - timedelta(days=1),
+        ai_verdict={"ok": True},
+    )
+    prev_a.rule_code = "AI_RULE_A"
+    prev_b = _make_finding(
+        status=FindingStatus.existing,
+        fingerprint="fp-ai-b",
+        created_at=now - timedelta(days=1),
+        ai_verdict={"ok": True},
+    )
+    prev_b.rule_code = "NOT_ALLOWED"
+    repo = _StubFindingRepo([prev_a, prev_b])
+    service = FindingHistoryService(repo)  # type: ignore[arg-type]
+
+    fixed_rows = asyncio.run(
+        service.apply_status_lifecycle(
+            account_id=uuid4(),
+            audit_id=uuid4(),
+            level=None,
+            current_findings=[],
+            require_ai_verdict_for_previous=True,
+            allowed_rule_codes={"AI_RULE_A"},
+        )
+    )
+    assert len(fixed_rows) == 1
+    assert fixed_rows[0].rule_code == "AI_RULE_A"
+
+
+def test_ai_lifecycle_with_empty_allowed_rule_codes_closes_nothing() -> None:
+    now = datetime.now(timezone.utc)
+    prev_ai = _make_finding(
+        status=FindingStatus.existing,
+        fingerprint="fp-ai-x",
+        created_at=now - timedelta(days=1),
+        ai_verdict={"ok": True},
+    )
+    prev_ai.rule_code = "AI_RULE_X"
+    repo = _StubFindingRepo([prev_ai])
+    service = FindingHistoryService(repo)  # type: ignore[arg-type]
+
+    fixed_rows = asyncio.run(
+        service.apply_status_lifecycle(
+            account_id=uuid4(),
+            audit_id=uuid4(),
+            level=None,
+            current_findings=[],
+            require_ai_verdict_for_previous=True,
+            allowed_rule_codes=set(),
+        )
+    )
+    assert fixed_rows == []

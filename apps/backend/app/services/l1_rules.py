@@ -59,6 +59,11 @@ def _is_servable_ad_group(group: dict[str, Any]) -> bool:
 
 def _is_servable_yandex_ad(ad: dict[str, Any]) -> bool:
     """Ads use `State` (ON/OFF/…) and `Status` (ACCEPTED/…) in API v5."""
+    serving_status = str(ad.get("serving_status") or "").strip().lower()
+    if serving_status in {"not_eligible", "suspended"}:
+        return False
+    if serving_status in {"eligible"}:
+        return True
     state = str(ad.get("state") or "").strip().lower()
     if state in {"off", "suspended", "archived", "deleted"}:
         return False
@@ -581,6 +586,7 @@ def _active_ad_rejected_or_restricted(ctx: L1Context, rule: dict[str, Any]) -> l
                 ad_external_id=str(ad.get("id")),
                 evidence={
                     "ad_id": ad.get("id"),
+                    "ad_title": ad.get("title"),
                     "moderation_status": ad.get("moderation_status"),
                     "serving_status": ad.get("serving_status"),
                 },

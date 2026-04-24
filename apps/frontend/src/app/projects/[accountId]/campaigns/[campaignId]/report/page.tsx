@@ -35,8 +35,30 @@ type Finding = {
   impact_ru: string;
   recommendation_ru: string;
   status: string;
+  ai_verdict?: Record<string, unknown> | null;
   created_at: string;
 };
+
+type GroupedModerationAd = {
+  adId: string;
+  adTitle: string;
+};
+
+type DisplayRow = Finding & {
+  groupedModerationAds?: GroupedModerationAd[];
+};
+
+type ActiveCatalogRule = {
+  rule_code: string;
+  fix_recommendation?: string | null;
+};
+
+type ActiveCatalogResponse = {
+  rules: ActiveCatalogRule[];
+};
+
+const RULE_ACTIVE_AD_REJECTED_OR_RESTRICTED = "ACTIVE_AD_REJECTED_OR_RESTRICTED";
+const RULE_ACTIVE_CAMPAIGN_WITHOUT_ACTIVE_GROUPS = "ACTIVE_CAMPAIGN_WITHOUT_ACTIVE_GROUPS";
 
 const EVIDENCE_LABEL_RU: Record<string, string> = {
   campaign_id: "Кампания",
@@ -75,6 +97,15 @@ function evidenceLabel(key: string): string {
   return EVIDENCE_LABEL_RU[key] ?? key;
 }
 
+function statusWordRu(value: unknown): string {
+  const raw = String(value ?? "").toLowerCase();
+  if (raw === "paused") return "Пауза";
+  if (raw === "active") return "Активна";
+  if (raw === "archived") return "Архив";
+  if (raw === "stopped") return "Остановлена";
+  return String(value ?? "—");
+}
+
 function formatEvidenceValue(key: string, v: unknown): React.ReactNode {
   if (v === null || v === undefined) return "—";
   if (key === "groups_in_snapshot" && Array.isArray(v)) {
@@ -108,9 +139,34 @@ function formatEvidenceValue(key: string, v: unknown): React.ReactNode {
   return String(v);
 }
 
-function EvidenceBlock({ ev }: { ev: Record<string, unknown> | null | undefined }) {
+function EvidenceBlock({ row }: { row: Finding }) {
+  const ev = row.evidence ?? undefined;
   if (!ev || Object.keys(ev).length === 0) {
     return <p className="text-xs text-muted-foreground">Нет структурированных подсказок по объектам.</p>;
+  }
+  if (row.rule_code === RULE_ACTIVE_CAMPAIGN_WITHOUT_ACTIVE_GROUPS) {
+    const campaignId = String(ev.campaign_id ?? "—");
+    const campaignName = String(ev.campaign_name ?? "—");
+    const groups = Array.isArray(ev.groups_in_snapshot) ? (ev.groups_in_snapshot as Record<string, unknown>[]) : [];
+    const stoppedGroups = groups
+      .filter((item) => String(item.status ?? "").toLowerCase() === "paused")
+      .map((item) => `ID ${String(item.group_id ?? item.id ?? "—")} — Статус: ${statusWordRu(item.status)}`);
+    return (
+      <dl className="space-y-2 text-xs">
+        <div>
+          <dt className="font-medium text-foreground">Кампания</dt>
+          <dd className="text-muted-foreground">
+            {campaignId} / {campaignName}
+          </dd>
+        </div>
+        <div>
+          <dt className="font-medium text-foreground">Остановленные группы</dt>
+          <dd className="text-muted-foreground">
+            {stoppedGroups.length > 0 ? stoppedGroups.join("; ") : "Нет"}
+          </dd>
+        </div>
+      </dl>
+    );
   }
   return (
     <dl className="space-y-2 text-xs">
@@ -140,6 +196,7 @@ export default function CampaignReportPage() {
   const [auditTaskId, setAuditTaskId] = useState<string | null>(null);
   const [auditStatus, setAuditStatus] = useState<string | null>(null);
   const [auditRunning, setAuditRunning] = useState(false);
+  const [catalogRecommendations, setCatalogRecommendations] = useState<Record<string, string>>({});
   const levels = ["L1", "L2", "L3", "AI"] as const;
 
   useEffect(() => {
@@ -150,12 +207,19 @@ export default function CampaignReportPage() {
   }, [campaignId, campaignName]);
 
   async function loadReport(activeToken: string) {
-    const [findings, campaigns] = await Promise.all([
+    const [findings, campaigns, activeCatalog] = await Promise.all([
       apiGet<Finding[]>(`/findings?account_id=${accountId}&campaign_id=${encodeURIComponent(campaignId)}&limit=500`, activeToken),
       apiGet<Campaign[]>(`/ad-accounts/${accountId}/campaigns`, activeToken),
+      apiGet<ActiveCatalogResponse>("/rule-catalogs/active", activeToken),
     ]);
     setRows(findings);
     setCampaignName(campaigns.find((x) => x.id === campaignId)?.name ?? null);
+    const recMap: Record<string, string> = {};
+    for (const rule of activeCatalog.rules ?? []) {
+      const text = String(rule.fix_recommendation ?? "").trim();
+      if (text) recMap[rule.rule_code] = text;
+    }
+    setCatalogRecommendations(recMap);
   }
 
   useEffect(() => {
@@ -192,15 +256,42 @@ export default function CampaignReportPage() {
     () => latestRows.filter((row) => (showFixed ? true : row.status !== "fixed")),
     [latestRows, showFixed],
   );
-  const fixedHiddenCount = showFixed ? 0 : latestRows.length - visibleRows.length;
+  const displayRows = useMemo<DisplayRow[]>(() => {
+    const moderationRows = visibleRows.filter((row) => row.rule_code === RULE_ACTIVE_AD_REJECTED_OR_RESTRICTED);
+    const restRows = visibleRows.filter((row) => row.rule_code !== RULE_ACTIVE_AD_REJECTED_OR_RESTRICTED);
+    if (moderationRows.length === 0) return restRows;
+
+    const [leader, ...others] = moderationRows;
+    const groupedByAd = new Map<string, GroupedModerationAd>();
+    for (const item of [leader, ...others]) {
+      const adIdRaw = item.ad_external_id ?? item.evidence?.ad_id;
+      if (!adIdRaw) continue;
+      const adId = String(adIdRaw);
+      const adTitleRaw = item.evidence?.ad_title;
+      const adTitle = String(adTitleRaw ?? "").trim() || "Название объявления недоступно";
+      if (!groupedByAd.has(adId)) {
+        groupedByAd.set(adId, { adId, adTitle });
+      }
+    }
+
+    const groupedModeration: DisplayRow = {
+      ...leader,
+      groupedModerationAds: Array.from(groupedByAd.values()).sort((a, b) => a.adId.localeCompare(b.adId)),
+    };
+    return [groupedModeration, ...restRows];
+  }, [visibleRows]);
+  const fixedHiddenCount = useMemo(() => {
+    if (showFixed) return 0;
+    return latestRows.filter((row) => row.status === "fixed" && !row.ai_verdict).length;
+  }, [latestRows, showFixed]);
 
   const countByLevel = useMemo(() => {
     const m: Record<string, number> = { L1: 0, L2: 0, L3: 0, AI: 0 };
-    for (const row of visibleRows) {
+    for (const row of displayRows) {
       m[row.level] = (m[row.level] ?? 0) + 1;
     }
     return m;
-  }, [visibleRows]);
+  }, [displayRows]);
 
   function severityRu(v: string) {
     if (v === "critical") return "Критично";
@@ -331,8 +422,9 @@ export default function CampaignReportPage() {
             </tr>
           </thead>
           <tbody>
-            {visibleRows.map((row) => {
+            {displayRows.map((row) => {
               const title = ruleTitleRu(row.rule_code, row.rule_name);
+              const isModerationRule = row.rule_code === RULE_ACTIVE_AD_REJECTED_OR_RESTRICTED;
               const loc = [
                 row.campaign_external_id ? `камп. ${row.campaign_external_id}` : null,
                 row.group_external_id ? `гр. ${row.group_external_id}` : null,
@@ -349,8 +441,10 @@ export default function CampaignReportPage() {
                           <span className="text-sm font-semibold">{title}</span>
                           <span className="text-xs text-muted-foreground">{severityRu(row.severity)}</span>
                           <span className="text-xs text-muted-foreground">{row.level}</span>
-                          <span className="text-xs text-muted-foreground">{statusRu(row.status)}</span>
-                          {loc ? <span className="text-xs text-blue-800">Объекты: {loc}</span> : null}
+                          <span className={row.status === "existing" ? "text-xs font-semibold text-red-600" : "text-xs text-muted-foreground"}>
+                            {statusRu(row.status)}
+                          </span>
+                          {loc && !isModerationRule ? <span className="text-xs text-blue-800">Объекты: {loc}</span> : null}
                           <span className="ml-auto text-xs text-muted-foreground">
                             {new Date(row.created_at).toLocaleString("ru-RU")}
                           </span>
@@ -359,16 +453,35 @@ export default function CampaignReportPage() {
                       </summary>
                       <div className="border-t px-3 py-2">
                         <p className="text-xs font-medium text-muted-foreground">Рекомендация</p>
-                        <p className="text-sm">{row.recommendation_ru}</p>
-                        <p className="mt-2 text-xs font-medium text-muted-foreground">Детали (снимок аудита)</p>
-                        <EvidenceBlock ev={row.evidence ?? undefined} />
+                        {isModerationRule ? (
+                          <>
+                            <p className="text-sm">Исправить объявление по замечаниям модерации.</p>
+                            <p className="mt-2 text-xs font-medium text-muted-foreground">Детали:</p>
+                            <div className="text-sm text-foreground">
+                              <p>Объявления, не прошедшие модерацию:</p>
+                              <ul className="mt-1 list-inside list-disc">
+                                {(row.groupedModerationAds ?? []).map((item) => (
+                                  <li key={item.adId}>
+                                    {item.adId} - {item.adTitle}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-sm">{catalogRecommendations[row.rule_code] ?? row.recommendation_ru}</p>
+                            <p className="mt-2 text-xs font-medium text-muted-foreground">Детали (снимок аудита)</p>
+                            <EvidenceBlock row={row} />
+                          </>
+                        )}
                       </div>
                     </details>
                   </td>
                 </tr>
               );
             })}
-            {visibleRows.length === 0 ? (
+            {displayRows.length === 0 ? (
               <tr>
                 <td className="px-3 py-6 text-muted-foreground">По кампании пока нет находок.</td>
               </tr>

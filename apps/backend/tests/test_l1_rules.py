@@ -31,6 +31,30 @@ def test_active_group_without_active_ads_rule() -> None:
     assert len(findings) == 1
     assert findings[0].group_external_id == "g1"
 
+def test_active_group_without_active_ads_respects_serving_status() -> None:
+    registry = build_l1_rule_registry()
+    rule = registry["ACTIVE_GROUP_WITHOUT_ACTIVE_ADS"]
+    ctx = L1Context(
+        account_id="acc1",
+        campaigns=[{"id": "c1", "status": "active"}],
+        groups=[{"id": "g1", "campaign_id": "c1", "status": "active"}],
+        ads=[
+            {
+                "id": "a1",
+                "ad_group_id": "g1",
+                "campaign_id": "c1",
+                "status": "active",
+                "serving_status": "not_eligible",
+                "moderation_status": "rejected",
+            }
+        ],
+        keywords=[],
+        extensions=[],
+    )
+    findings = rule(ctx, {"recommendation_ru": "fix"})
+    assert len(findings) == 1
+    assert findings[0].group_external_id == "g1"
+
 
 def test_duplicate_keywords_in_group_rule() -> None:
     registry = build_l1_rule_registry()

@@ -91,7 +91,7 @@ export default function HelpPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" asChild>
-            <Link href="/dashboard">К аккаунтам</Link>
+            <Link href="/dashboard">Главная</Link>
           </Button>
         </div>
       </div>

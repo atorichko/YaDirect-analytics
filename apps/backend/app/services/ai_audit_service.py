@@ -32,6 +32,7 @@ def _is_active_state(value: object) -> bool:
 class AIAuditService:
     PROMPT_SETTING_KEY = "ai_analysis_prompt"
     DEFAULT_PROMPT_PREFIX = DEFAULT_AI_ANALYSIS_PROMPT_PREFIX
+    _OPEN_STATUSES = {FindingStatus.new, FindingStatus.existing, FindingStatus.reopened}
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -147,7 +148,9 @@ class AIAuditService:
                         )
 
             fixed_rows: list[Finding] = []
-            if entities:
+            ai_rule_codes = {r.rule_code for r in ai_rules}
+            # Safety: with no AI rules in active catalog, AI stage must not alter lifecycle.
+            if entities and ai_rule_codes:
                 fixed_rows = await self._history.apply_status_lifecycle(
                     account_id=account_id,
                     audit_id=audit.id,
@@ -155,6 +158,13 @@ class AIAuditService:
                     campaign_external_id=campaign_external_id,
                     current_findings=findings_rows,
                     require_ai_verdict_for_previous=True,
+                    allowed_rule_codes=ai_rule_codes,
+                )
+                fixed_rows = await self._drop_fixed_rows_shadowed_by_deterministic(
+                    account_id=account_id,
+                    audit_id=audit.id,
+                    campaign_external_id=campaign_external_id,
+                    fixed_rows=fixed_rows,
                 )
             await self._findings.bulk_create(findings_rows + fixed_rows)
             await self._audits.mark_completed(audit, datetime.now(timezone.utc))
@@ -244,3 +254,28 @@ class AIAuditService:
     def _fingerprint(rule_code: str, entity_key: str, evidence_signature: str) -> str:
         payload = f"{rule_code}|{entity_key}|{evidence_signature}"
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    async def _drop_fixed_rows_shadowed_by_deterministic(
+        self,
+        *,
+        account_id: UUID,
+        audit_id: UUID,
+        campaign_external_id: str | None,
+        fixed_rows: list[Finding],
+    ) -> list[Finding]:
+        if not fixed_rows:
+            return fixed_rows
+        previous = await self._findings.list_by_account(
+            account_id=account_id,
+            exclude_audit_id=audit_id,
+            level=None,
+            campaign_external_id=campaign_external_id,
+            require_ai_verdict=False,
+            rule_codes={row.rule_code for row in fixed_rows},
+        )
+        deterministic_open = {
+            (row.rule_code, row.entity_key)
+            for row in previous
+            if row.ai_verdict is None and row.status in self._OPEN_STATUSES
+        }
+        return [row for row in fixed_rows if (row.rule_code, row.entity_key) not in deterministic_open]

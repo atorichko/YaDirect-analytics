@@ -33,6 +33,8 @@ class RuleCatalogService:
                 catalog_id=catalog.id,
                 rule_code=item.rule_code,
                 rule_name=item.rule_name,
+                rule_description=item.rule_description,
+                fix_recommendation=item.fix_recommendation,
                 level=item.level,
                 severity=item.severity,
                 check_type=item.check_type,

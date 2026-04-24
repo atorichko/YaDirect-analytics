@@ -35,6 +35,8 @@ class RuleDefinition(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     catalog_id: Mapped[UUID] = mapped_column(ForeignKey("rule_catalogs.id", ondelete="CASCADE"), nullable=False)
     rule_code: Mapped[str] = mapped_column(String(64), nullable=False)
     rule_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    rule_description: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    fix_recommendation: Mapped[str | None] = mapped_column(String(4096), nullable=True)
     level: Mapped[str] = mapped_column(String(4), nullable=False)
     severity: Mapped[str] = mapped_column(String(16), nullable=False)
     check_type: Mapped[str] = mapped_column(String(32), nullable=False)

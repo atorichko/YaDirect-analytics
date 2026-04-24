@@ -22,6 +22,7 @@ class FindingHistoryService:
         campaign_external_id: str | None = None,
         current_findings: list[Finding],
         require_ai_verdict_for_previous: bool = False,
+        allowed_rule_codes: set[str] | None = None,
     ) -> list[Finding]:
         previous = await self._finding_repo.list_by_account(
             account_id=account_id,
@@ -29,6 +30,7 @@ class FindingHistoryService:
             level=level,
             campaign_external_id=campaign_external_id,
             require_ai_verdict=True if require_ai_verdict_for_previous else None,
+            rule_codes=allowed_rule_codes,
         )
         latest_by_fingerprint: dict[str, Finding] = {}
         for row in previous:
