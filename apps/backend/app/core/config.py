@@ -1,15 +1,29 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# config.py -> app/core -> app -> backend (apps/backend) -> apps -> repo root
+_candidate_root = Path(__file__).resolve().parents[4]
+_REPO_ROOT = _candidate_root if (_candidate_root / "docker-compose.yml").is_file() else Path(__file__).resolve().parents[2]
+_env_candidates: tuple[Path, ...] = tuple(
+    p
+    for p in (
+        _REPO_ROOT / ".env",
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parents[2] / ".env",
+    )
+    if p.is_file()
+)
+
+_settings_config_kwargs: dict[str, object] = {"env_file_encoding": "utf-8", "extra": "ignore"}
+if _env_candidates:
+    _settings_config_kwargs["env_file"] = _env_candidates
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+    model_config = SettingsConfigDict(**_settings_config_kwargs)
 
     app_name: str = Field(default="yadirect-analytics", validation_alias="APP_NAME")
     environment: str = Field(default="local", validation_alias="ENVIRONMENT")
