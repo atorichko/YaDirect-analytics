@@ -16,9 +16,9 @@ export default function HandoffPage() {
         </p>
         <h1 className="text-2xl font-semibold tracking-tight">YaDirect-analytics — контекст для работы</h1>
         <p className="text-muted-foreground">
-          Кратко по сути (ориентир — ТЗ и «легенда» уровней в{" "}
+          Кратко по сути (ориентир — «легенда» уровней L1/L2/L3 в{" "}
           <code className="rounded bg-muted px-1 py-0.5 text-xs">temp/легенда.txt</code>
-          ), архитектура, окружение, выкладка и каталог правил.
+          ), архитектура, окружение, Docker/nginx, выкладка и единый каталог правил.
         </p>
         <p className="text-muted-foreground">
           Пользовательская справка по проверкам:{" "}
@@ -81,7 +81,26 @@ export default function HandoffPage() {
           <strong> db</strong> (Postgres), <strong>redis</strong>, <strong>backend</strong> (uvicorn),{" "}
           <strong>worker</strong> и <strong>beat</strong> (Celery), <strong>frontend</strong> (Next). Переменные
           окружения задаются через <code className="rounded bg-muted px-1">.env</code> в корне (см.{" "}
-          <code className="rounded bg-muted px-1">env.example</code>).
+          <code className="rounded bg-muted px-1">env.example</code>). Pydantic подхватывает переменные из окружения
+          процесса (как задаёт Compose) и при локальной разработке — <code className="rounded bg-muted px-1">.env</code>{" "}
+          рядом с <code className="rounded bg-muted px-1">docker-compose.yml</code>.
+        </p>
+        <p className="text-muted-foreground">
+          <strong>Сборка backend / worker / beat</strong> идёт с <strong>контекстом всего монорепо</strong> (
+          <code className="rounded bg-muted px-1">build.context: .</code>,{" "}
+          <code className="rounded bg-muted px-1">dockerfile: apps/backend/Dockerfile</code>): в образ копируется код{" "}
+          <code className="rounded bg-muted px-1">apps/backend/</code> и для согласованности с UI — снимок{" "}
+          <code className="rounded bg-muted px-1">apps/frontend/src/data/rule-catalog.json</code> →{" "}
+          <code className="rounded bg-muted px-1">/app/frontend-data/rule-catalog.json</code> (тесты выравнивания
+          каталога). В корне репозитория есть <code className="rounded bg-muted px-1">.dockerignore</code> (исключает{" "}
+          <code className="rounded bg-muted px-1">node_modules</code>, <code className="rounded bg-muted px-1">.next</code>,{" "}
+          <code className="rounded bg-muted px-1">temp</code> и т.д. из контекста сборки).
+        </p>
+        <p className="text-muted-foreground">
+          Порты на <strong>хосте</strong> по умолчанию: backend <code className="rounded bg-muted px-1">8010→8000</code>, frontend{" "}
+          <code className="rounded bg-muted px-1">3001→3000</code>. Общий nginx должен проксировать на{" "}
+          <strong>8010</strong> (API) и <strong>3001</strong> (Next), иначе будет <strong>502</strong>. Актуальный пример:{" "}
+          <code className="rounded bg-muted px-1">infra/nginx/atorichko.asur-adigital.ru-locations.conf.example</code>.
         </p>
         <p className="text-muted-foreground">
           На VDS за обратным прокси часто стоит <strong>общий nginx</strong> с другими проектами: этот стек{" "}
@@ -90,11 +109,13 @@ export default function HandoffPage() {
           ).
         </p>
         <p className="text-muted-foreground">
-          Публичный путь деплоя (пример из README): префикс{" "}
+          Публичный путь деплоя (пример): префикс{" "}
           <code className="rounded bg-muted px-1">/YaDirect-analytics/</code>, API —{" "}
           <code className="rounded bg-muted px-1">.../api/v1</code>. В <code className="rounded bg-muted px-1">.env</code>{" "}
           должны совпадать <code className="rounded bg-muted px-1">NEXT_PUBLIC_BASE_PATH</code> и{" "}
-          <code className="rounded bg-muted px-1">NEXT_PUBLIC_API_V1_URL</code> с реальным URL.
+          <code className="rounded bg-muted px-1">NEXT_PUBLIC_API_V1_URL</code> с реальным URL. Для отладки OAuth:{" "}
+          <code className="rounded bg-muted px-1">GET /api/v1/health</code> возвращает поле{" "}
+          <code className="rounded bg-muted px-1">yandex_oauth_redirect_uri</code> — то, что реально видит процесс backend.
         </p>
       </section>
 
@@ -139,8 +160,16 @@ export default function HandoffPage() {
         <h2 className="text-lg font-semibold">Каталог правил аудита</h2>
         <ul className="list-inside list-disc space-y-2 text-muted-foreground">
           <li>
-            Единый источник структуры каталога для справки UI и проверок в коде:{" "}
-            <code className="rounded bg-muted px-1">apps/frontend/src/data/rule-catalog.json</code>.
+            <strong>Единственный файл каталога в git</strong> для UI и для загрузки в API:{" "}
+            <code className="rounded bg-muted px-1">apps/frontend/src/data/rule-catalog.json</code>. Отдельные копии
+            вида <code className="rounded bg-muted px-1">каталог правил.json</code> в корне, в{" "}
+            <code className="rounded bg-muted px-1">temp/</code> или в{" "}
+            <code className="rounded bg-muted px-1">tests/fixtures/</code> <strong>не используются</strong> — удалены,
+            чтобы не расходились с фронтом.
+          </li>
+          <li>
+            Страница <Link href="/help" className="text-primary underline-offset-4 hover:underline">/help</Link> и
+            бэкенд-тесты выравнивания опираются на тот же JSON (в Docker — копия из образа, см. выше).
           </li>
           <li>
             Реализация проверок в коде: <code className="rounded bg-muted px-1">l1_rules.py</code>,{" "}
@@ -152,7 +181,8 @@ export default function HandoffPage() {
             на JSON в репозитории. Загрузка и активация через API (админ):{" "}
             <code className="rounded bg-muted px-1">POST /api/v1/rule-catalogs</code> и{" "}
             <code className="rounded bg-muted px-1">POST /api/v1/rule-catalogs/{"{id}"}/activate</code>. Текущий активный:{" "}
-            <code className="rounded bg-muted px-1">GET /api/v1/rule-catalogs/active</code>.
+            <code className="rounded bg-muted px-1">GET /api/v1/rule-catalogs/active</code>. Тело запроса загрузки —
+            содержимое <code className="rounded bg-muted px-1">rule-catalog.json</code>.
           </li>
         </ul>
         <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
@@ -194,7 +224,8 @@ git pull --ff-only origin main`}
               3. Сборка образов и миграции БД
             </p>
             <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-background p-3 text-[0.8rem] leading-normal">
-{`docker compose build backend worker beat frontend
+{`# backend/worker/beat собираются из корня репозитория (нужен доступ к frontend rule-catalog.json)
+docker compose build backend worker beat frontend
 docker compose run --rm backend alembic upgrade head`}
             </pre>
           </div>
