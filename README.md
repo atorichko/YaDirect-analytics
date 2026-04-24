@@ -118,6 +118,8 @@ npm run build
 
 Публичный URL: `https://atorichko.asur-adigital.ru/YaDirect-analytics/`
 
+**502 Bad Gateway:** nginx не достучался до upstream. По умолчанию в `docker-compose.yml` backend слушает на хосте **`127.0.0.1:8010`**, frontend — **`127.0.0.1:3001`**. В `proxy_pass` должны быть эти порты (или те, что вы задали сами). См. актуальный пример: `infra/nginx/atorichko.asur-adigital.ru-locations.conf.example`.
+
 В server env:
 - `NEXT_PUBLIC_BASE_PATH=/YaDirect-analytics`
 - `NEXT_PUBLIC_API_V1_URL=https://atorichko.asur-adigital.ru/YaDirect-analytics/api/v1`
