@@ -49,6 +49,7 @@ def normalize_health(item: dict) -> dict:
         "ssl_error": ssl.get("error") if isinstance(ssl, dict) else None,
         "redirect_chain": item.get("redirect_chain") or [],
         "final_url": item.get("final_url"),
+        "https_available": item.get("https_available"),
     }
 
 

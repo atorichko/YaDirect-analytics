@@ -66,6 +66,24 @@ const EVIDENCE_LABEL_RU: Record<string, string> = {
   utm_validation_errors: "Ошибки UTM",
   redirect_chain: "Цепочка редиректов",
   broken_sitelinks: "Битые быстрые ссылки",
+  broken_sitelink_urls: "Битые быстрые ссылки (URL)",
+  main_url: "Основной URL",
+  main_domain: "Домен объявления",
+  sitelink_urls: "Быстрые ссылки",
+  sitelink_domains: "Домены быстрых ссылок (несовпадение)",
+  checked_url: "Проверенный URL",
+  utm_param_status: "Статус UTM-параметров",
+  utm_issue_details: "Детали ошибок UTM",
+  url_syntax_issues: "Проблемы синтаксиса URL",
+  url_value_segments: "URL (фрагменты)",
+  query_highlight_segments: "Query-строка (ошибки)",
+  empty_or_technical_values: "Пустые/технические значения",
+  https_available: "HTTPS доступен",
+  ssl_error: "Ошибка SSL",
+  redirect_hops: "Количество редиректов",
+  matched_date_text: "Найденный фрагмент даты",
+  parsed_date: "Распознанная дата",
+  matched_placeholders: "Все плейсхолдеры",
   conflicting_negative: "Конфликт минус-слова",
   conflict_tokens: "Конфликтующие токены",
   missing_negative_tokens: "Нужны минус-слова",
@@ -89,8 +107,76 @@ function statusWordRu(value: unknown): string {
   return String(value ?? "—");
 }
 
+function SegmentList({ segments }: { segments: Array<{ text?: string; ok?: boolean }> }) {
+  return (
+    <p className="mt-1 break-all font-mono text-[11px] leading-relaxed">
+      {segments.map((seg, i) => (
+        <span key={i} className={seg.ok === false ? "text-destructive font-medium" : "text-muted-foreground"}>
+          {seg.text ?? ""}
+        </span>
+      ))}
+    </p>
+  );
+}
+
 function formatEvidenceValue(key: string, v: unknown): React.ReactNode {
   if (v === null || v === undefined) return "—";
+  if (
+    (key === "url_value_segments" || key === "query_highlight_segments") &&
+    Array.isArray(v) &&
+    v.length > 0 &&
+    typeof v[0] === "object"
+  ) {
+    return <SegmentList segments={v as Array<{ text?: string; ok?: boolean }>} />;
+  }
+  if (key === "sitelink_urls" && Array.isArray(v)) {
+    return (
+      <ul className="mt-1 list-inside list-disc space-y-1 font-mono text-[11px]">
+        {(v as Record<string, unknown>[]).map((row, i) => (
+          <li key={i} className={row.matches_main_domain === false ? "text-destructive" : ""}>
+            {String(row.url ?? "")}
+            {row.domain != null ? ` — домен: ${String(row.domain)}` : ""}
+            {row.matches_main_domain === false ? " (не совпадает с основным)" : ""}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  if (key === "utm_issue_details" && Array.isArray(v)) {
+    return (
+      <ul className="mt-1 list-inside list-disc space-y-0.5 text-[11px]">
+        {(v as Record<string, unknown>[]).map((row, i) => (
+          <li key={i}>
+            <span className="text-destructive">{String(row.code ?? "")}</span>
+            {row.param ? ` — ${String(row.param)}` : ""}: {String(row.issue ?? "")}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  if (key === "utm_param_status" && Array.isArray(v)) {
+    return (
+      <ul className="mt-1 list-inside list-disc space-y-0.5 font-mono text-[11px]">
+        {(v as Record<string, unknown>[]).map((row, i) => (
+          <li key={i} className={row.present === false ? "text-destructive" : ""}>
+            {String(row.param ?? "")}: {row.present === false ? "отсутствует" : String(row.value ?? "—")}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  if (key === "broken_sitelink_urls" && Array.isArray(v)) {
+    return (
+      <ul className="mt-1 list-inside list-disc space-y-1 break-all font-mono text-[11px]">
+        {(v as Record<string, unknown>[]).map((row, i) => (
+          <li key={i}>
+            {row.sitelink_id != null ? <span className="text-muted-foreground">ID {String(row.sitelink_id)} — </span> : null}
+            <span className="text-destructive">{String(row.url ?? "")}</span>
+          </li>
+        ))}
+      </ul>
+    );
+  }
   if (key === "groups_in_snapshot" && Array.isArray(v)) {
     return (
       <ul className="mt-1 list-inside list-disc space-y-0.5">

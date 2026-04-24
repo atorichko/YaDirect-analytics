@@ -114,7 +114,11 @@ def _conversion_strategy_without_metrika(ctx: L2Context, rule: dict[str, Any]) -
                 campaign_external_id=campaign_id,
                 group_external_id=None,
                 ad_external_id=None,
-                evidence={"campaign_id": campaign_id, "strategy_type": campaign.get("strategy_type")},
+                evidence={
+                    "campaign_id": campaign_id,
+                    "strategy_type": campaign.get("strategy_type"),
+                    "metrika_counter_id": campaign.get("metrika_counter_id"),
+                },
                 impact_ru="Конверсионная стратегия без привязки к Метрике не может корректно оптимизироваться.",
                 recommendation_ru=rule.get("recommendation_ru", "Подключить счётчик Метрики к кампании."),
             )
@@ -138,7 +142,11 @@ def _conversion_strategy_without_goal(ctx: L2Context, rule: dict[str, Any]) -> l
                 campaign_external_id=campaign_id,
                 group_external_id=None,
                 ad_external_id=None,
-                evidence={"campaign_id": campaign_id, "strategy_type": campaign.get("strategy_type")},
+                evidence={
+                    "campaign_id": campaign_id,
+                    "strategy_type": campaign.get("strategy_type"),
+                    "goal_ids": goal_ids if isinstance(goal_ids, list) else [],
+                },
                 impact_ru="Конверсионная стратегия без цели не имеет сигнала для обучения.",
                 recommendation_ru=rule.get("recommendation_ru", "Задайте цель Метрики для кампании."),
             )
@@ -174,6 +182,15 @@ def _conversion_strategy_with_unavailable_goal(ctx: L2Context, rule: dict[str, A
         if not bad:
             continue
         campaign_id = str(campaign.get("id"))
+        first = bad[0]
+        ev: dict[str, Any] = {"campaign_id": campaign_id, "problem_goals": bad}
+        gid = str(first.get("goal_id") or "")
+        if gid:
+            ev["goal_id"] = gid
+        if first.get("status") is not None:
+            ev["goal_status"] = first.get("status")
+        if first.get("access") is not None:
+            ev["goal_access"] = first.get("access")
         out.append(
             FindingDraft(
                 entity_key=f"campaign:{campaign_id}:unavailable_goal",
@@ -181,7 +198,7 @@ def _conversion_strategy_with_unavailable_goal(ctx: L2Context, rule: dict[str, A
                 campaign_external_id=campaign_id,
                 group_external_id=None,
                 ad_external_id=None,
-                evidence={"campaign_id": campaign_id, "problem_goals": bad},
+                evidence=ev,
                 impact_ru="В конверсионной стратегии указана недоступная или удалённая цель Метрики.",
                 recommendation_ru=rule.get("recommendation_ru", "Выберите активную цель или восстановите доступ."),
             )

@@ -121,7 +121,7 @@ def test_expired_date_in_extensions_yandex_fixture_sitelink() -> None:
     findings = rule(ctx, {})
     ad_ids = {str(f.evidence.get("ad_id")) for f in findings}
     assert "A20031" in ad_ids
-    assert any(str(f.evidence.get("expired_date")) == "31.12.2025" for f in findings)
+    assert any(str(f.evidence.get("matched_date_text")) == "31.12.2025" for f in findings)
 
 
 def test_campaign_geo_overlaps_campaign_negatives_rule() -> None:

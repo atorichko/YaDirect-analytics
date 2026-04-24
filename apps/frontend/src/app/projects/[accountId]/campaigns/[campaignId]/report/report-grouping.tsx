@@ -425,19 +425,29 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
         <div className="space-y-3 text-sm text-foreground">
           {sorted.map((item) => {
             const adId = String(item.ad_external_id ?? item.evidence?.ad_id ?? "");
-            const clusters = item.evidence?.duplicate_sitelinks;
+            const clusters =
+              (item.evidence?.duplicate_sitelink_clusters as unknown[] | undefined) ??
+              item.evidence?.duplicate_sitelinks;
+            const idList = item.evidence?.duplicate_sitelinks;
             const lines: string[] = [];
             if (Array.isArray(clusters)) {
-              for (const cl of clusters) {
-                if (!Array.isArray(cl)) continue;
-                for (const sl of cl) {
-                  if (sl && typeof sl === "object") {
-                    const o = sl as Record<string, unknown>;
-                    const t = String(o.title ?? "").trim();
-                    const u = String(o.url ?? "").trim();
-                    if (t && u) lines.push(`${t} - ${u}`);
-                    else if (u) lines.push(u);
-                    else if (t) lines.push(t);
+              const first = clusters[0];
+              if (typeof first === "string") {
+                for (const sid of clusters) lines.push(String(sid));
+              } else {
+                for (const cl of clusters) {
+                  if (!Array.isArray(cl)) continue;
+                  for (const sl of cl) {
+                    if (sl && typeof sl === "object") {
+                      const o = sl as Record<string, unknown>;
+                      const t = String(o.title ?? "").trim();
+                      const u = String(o.url ?? "").trim();
+                      const sid = o.sitelink_id != null ? String(o.sitelink_id) : "";
+                      if (sid) lines.push(sid + (t ? ` — ${t}` : "") + (u ? ` — ${u}` : ""));
+                      else if (t && u) lines.push(`${t} - ${u}`);
+                      else if (u) lines.push(u);
+                      else if (t) lines.push(t);
+                    }
                   }
                 }
               }
@@ -446,6 +456,9 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
             return (
               <div key={item.id}>
                 <p className="font-medium">{adId || "—"}</p>
+                {Array.isArray(idList) && idList.length > 0 && typeof idList[0] === "string" ? (
+                  <p className="mt-0.5 text-xs text-muted-foreground">ID: {idList.join(", ")}</p>
+                ) : null}
                 {uniq.length > 0 ? (
                   <ul className="mt-0.5 list-inside list-disc">
                     {uniq.map((line, idx) => (

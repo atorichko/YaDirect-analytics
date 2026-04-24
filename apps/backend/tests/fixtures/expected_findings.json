@@ -1,0 +1,1589 @@
+{
+  "fixture_id": "yandex_direct_audit_test_account",
+  "catalog_version": "1.0.0",
+  "expected_run_mode": "first_audit_run",
+  "assumptions": [
+    "Все findings в первом прогоне имеют статус new.",
+    "Для AI-assisted правил используется не exact match, а subset/contains match по evidence.",
+    "Для правил MISSING_REQUIRED_UTM проверяются и основные URL, и URL быстрых ссылок.",
+    "Для некорректного URL syntax (например, A20021) UTM-проверки не ожидаются отдельно, чтобы не делать тест хрупким.",
+    "Для EXPIRED_DATE_IN_EXTENSIONS ожидаются отдельные findings по разным типам расширений, если дата встречается и в sitelink, и в callout.",
+    "Для duplicate/overlap AI-правил допустима агрегация нескольких сущностей в один finding."
+  ],
+  "exact_findings": [
+    {
+      "finding_key": "C100_ACTIVE_CAMPAIGN_WITHOUT_ACTIVE_GROUPS",
+      "rule_code": "ACTIVE_CAMPAIGN_WITHOUT_ACTIVE_GROUPS",
+      "level": "L1",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "campaign",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C100"
+      },
+      "evidence_contains": {
+        "campaign_id": "C100",
+        "active_group_count": 0
+      }
+    },
+    {
+      "finding_key": "G2001_ACTIVE_GROUP_WITHOUT_ACTIVE_ADS",
+      "rule_code": "ACTIVE_GROUP_WITHOUT_ACTIVE_ADS",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "group",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2001"
+      },
+      "evidence_contains": {
+        "campaign_id": "C200",
+        "group_id": "G2001",
+        "active_ads_count": 0,
+        "rejected_ads_count": 2
+      }
+    },
+    {
+      "finding_key": "G2001_GROUP_ALL_ADS_REJECTED",
+      "rule_code": "GROUP_ALL_ADS_REJECTED",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "group",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2001"
+      },
+      "evidence_contains": {
+        "campaign_id": "C200",
+        "group_id": "G2001",
+        "ads_count": 2,
+        "approved_ads_count": 0
+      }
+    },
+    {
+      "finding_key": "A20011_ACTIVE_AD_REJECTED_OR_RESTRICTED",
+      "rule_code": "ACTIVE_AD_REJECTED_OR_RESTRICTED",
+      "level": "L1",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2001",
+        "ad_id": "A20011"
+      },
+      "evidence_contains": {
+        "ad_id": "A20011",
+        "moderation_status": "rejected"
+      }
+    },
+    {
+      "finding_key": "A20012_ACTIVE_AD_REJECTED_OR_RESTRICTED",
+      "rule_code": "ACTIVE_AD_REJECTED_OR_RESTRICTED",
+      "level": "L1",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2001",
+        "ad_id": "A20012"
+      },
+      "evidence_contains": {
+        "ad_id": "A20012",
+        "moderation_status": "rejected"
+      }
+    },
+    {
+      "finding_key": "G2001_DUPLICATE_ADS",
+      "rule_code": "DUPLICATE_ADS",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2001",
+        "ad_ids": ["A20011", "A20012"]
+      },
+      "evidence_contains": {
+        "campaign_id": "C200",
+        "group_id": "G2001",
+        "ad_ids": ["A20011", "A20012"]
+      }
+    },
+    {
+      "finding_key": "A20011_MISSING_REQUIRED_EXTENSIONS",
+      "rule_code": "MISSING_REQUIRED_EXTENSIONS",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2001",
+        "ad_id": "A20011"
+      },
+      "evidence_contains": {
+        "ad_id": "A20011",
+        "missing_extensions": ["sitelinks", "callouts", "display_url", "contact_info", "image"]
+      }
+    },
+    {
+      "finding_key": "A20012_MISSING_REQUIRED_EXTENSIONS",
+      "rule_code": "MISSING_REQUIRED_EXTENSIONS",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2001",
+        "ad_id": "A20012"
+      },
+      "evidence_contains": {
+        "ad_id": "A20012",
+        "missing_extensions": ["sitelinks", "callouts", "display_url", "contact_info", "image"]
+      }
+    },
+    {
+      "finding_key": "A20011_EXPIRED_DATE_IN_AD_TEXT",
+      "rule_code": "EXPIRED_DATE_IN_AD_TEXT",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2001",
+        "ad_id": "A20011"
+      },
+      "evidence_contains": {
+        "ad_id": "A20011",
+        "matched_date_text": "Сдача в 2025",
+        "parsed_date": "2025"
+      }
+    },
+    {
+      "finding_key": "A20012_EXPIRED_DATE_IN_AD_TEXT",
+      "rule_code": "EXPIRED_DATE_IN_AD_TEXT",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2001",
+        "ad_id": "A20012"
+      },
+      "evidence_contains": {
+        "ad_id": "A20012",
+        "matched_date_text": "Сдача в 2025",
+        "parsed_date": "2025"
+      }
+    },
+    {
+      "finding_key": "A20011_PAST_YEAR_IN_TEXT",
+      "rule_code": "PAST_YEAR_IN_TEXT",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2001",
+        "ad_id": "A20011"
+      },
+      "evidence_contains": {
+        "ad_id": "A20011",
+        "matched_years": [2025]
+      }
+    },
+    {
+      "finding_key": "A20012_PAST_YEAR_IN_TEXT",
+      "rule_code": "PAST_YEAR_IN_TEXT",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2001",
+        "ad_id": "A20012"
+      },
+      "evidence_contains": {
+        "ad_id": "A20012",
+        "matched_years": [2025]
+      }
+    },
+    {
+      "finding_key": "A20011_UNRESOLVED_PLACEHOLDER_IN_TEXT",
+      "rule_code": "UNRESOLVED_PLACEHOLDER_IN_TEXT",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2001",
+        "ad_id": "A20011"
+      },
+      "evidence_contains": {
+        "ad_id": "A20011",
+        "matched_placeholder": "[jk_name]"
+      }
+    },
+    {
+      "finding_key": "A20012_UNRESOLVED_PLACEHOLDER_IN_TEXT",
+      "rule_code": "UNRESOLVED_PLACEHOLDER_IN_TEXT",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2001",
+        "ad_id": "A20012"
+      },
+      "evidence_contains": {
+        "ad_id": "A20012",
+        "matched_placeholder": "[jk_name]"
+      }
+    },
+    {
+      "finding_key": "A20011_UNRESOLVED_PLACEHOLDER_IN_URL",
+      "rule_code": "UNRESOLVED_PLACEHOLDER_IN_URL",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2001",
+        "ad_id": "A20011",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "ad_id": "A20011",
+        "matched_placeholder": "{campaign_id}"
+      }
+    },
+    {
+      "finding_key": "A20012_UNRESOLVED_PLACEHOLDER_IN_URL",
+      "rule_code": "UNRESOLVED_PLACEHOLDER_IN_URL",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2001",
+        "ad_id": "A20012",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "ad_id": "A20012",
+        "matched_placeholder": "{campaign_id}"
+      }
+    },
+    {
+      "finding_key": "G2002_ACTIVE_GROUP_WITHOUT_TARGETING",
+      "rule_code": "ACTIVE_GROUP_WITHOUT_TARGETING",
+      "level": "L1",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "group",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2002"
+      },
+      "evidence_contains": {
+        "group_id": "G2002",
+        "active_keywords_count": 0,
+        "autotargeting_enabled": false,
+        "active_audiences_count": 0
+      }
+    },
+    {
+      "finding_key": "A20021_INVALID_URL_SYNTAX",
+      "rule_code": "INVALID_URL_SYNTAX",
+      "level": "L3",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2002",
+        "ad_id": "A20021",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "ad_id": "A20021",
+        "url_value": "ht!tp://bad url"
+      }
+    },
+    {
+      "finding_key": "A20021_MISSING_REQUIRED_EXTENSIONS",
+      "rule_code": "MISSING_REQUIRED_EXTENSIONS",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2002",
+        "ad_id": "A20021"
+      },
+      "evidence_contains": {
+        "ad_id": "A20021",
+        "missing_extensions": ["sitelinks", "callouts", "display_url", "contact_info", "image"]
+      }
+    },
+    {
+      "finding_key": "G2003_DUPLICATE_KEYWORDS_IN_GROUP",
+      "rule_code": "DUPLICATE_KEYWORDS_IN_GROUP",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "keyword",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2003",
+        "keyword_ids": ["K20031", "K20032"]
+      },
+      "evidence_contains": {
+        "group_id": "G2003",
+        "keyword_ids": ["K20031", "K20032"],
+        "normalized_keyword": "купить квартиру москва"
+      }
+    },
+    {
+      "finding_key": "K20031_KEYWORD_CONFLICTS_WITH_GROUP_NEGATIVES",
+      "rule_code": "KEYWORD_CONFLICTS_WITH_GROUP_NEGATIVES",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "keyword",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2003",
+        "keyword_id": "K20031"
+      },
+      "evidence_contains": {
+        "keyword_id": "K20031",
+        "keyword_text": "купить квартиру москва",
+        "conflicting_negative": "москва"
+      }
+    },
+    {
+      "finding_key": "K20032_KEYWORD_CONFLICTS_WITH_GROUP_NEGATIVES",
+      "rule_code": "KEYWORD_CONFLICTS_WITH_GROUP_NEGATIVES",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "keyword",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2003",
+        "keyword_id": "K20032"
+      },
+      "evidence_contains": {
+        "keyword_id": "K20032",
+        "keyword_text": "КУПИТЬ КВАРТИРУ МОСКВА",
+        "conflicting_negative": "москва"
+      }
+    },
+    {
+      "finding_key": "K20033_KEYWORD_CONFLICTS_WITH_GROUP_NEGATIVES",
+      "rule_code": "KEYWORD_CONFLICTS_WITH_GROUP_NEGATIVES",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "keyword",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2003",
+        "keyword_id": "K20033"
+      },
+      "evidence_contains": {
+        "keyword_id": "K20033",
+        "keyword_text": "квартира ипотека москва",
+        "conflicting_negative": "москва"
+      }
+    },
+    {
+      "finding_key": "K20033_KEYWORD_CONFLICTS_WITH_CAMPAIGN_NEGATIVES",
+      "rule_code": "KEYWORD_CONFLICTS_WITH_CAMPAIGN_NEGATIVES",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "keyword",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2003",
+        "keyword_id": "K20033"
+      },
+      "evidence_contains": {
+        "keyword_id": "K20033",
+        "keyword_text": "квартира ипотека москва",
+        "conflicting_negative": "ипотека"
+      }
+    },
+    {
+      "finding_key": "A20031_DUPLICATE_SITELINKS",
+      "rule_code": "DUPLICATE_SITELINKS",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad_extension",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2003",
+        "ad_id": "A20031"
+      },
+      "evidence_contains": {
+        "ad_id": "A20031",
+        "duplicate_sitelinks": ["S200311", "S200312"]
+      }
+    },
+    {
+      "finding_key": "A20031_EXPIRED_DATE_IN_AD_TEXT",
+      "rule_code": "EXPIRED_DATE_IN_AD_TEXT",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2003",
+        "ad_id": "A20031"
+      },
+      "evidence_contains": {
+        "ad_id": "A20031",
+        "matched_date_text": "31.12.2025",
+        "parsed_date": "2025-12-31"
+      }
+    },
+    {
+      "finding_key": "A20031_PAST_YEAR_IN_TEXT",
+      "rule_code": "PAST_YEAR_IN_TEXT",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2003",
+        "ad_id": "A20031"
+      },
+      "evidence_contains": {
+        "ad_id": "A20031",
+        "matched_years": [2025]
+      }
+    },
+    {
+      "finding_key": "A20031_EXPIRED_DATE_IN_EXTENSIONS_SITELINK",
+      "rule_code": "EXPIRED_DATE_IN_EXTENSIONS",
+      "level": "L1",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad_extension",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2003",
+        "ad_id": "A20031",
+        "extension_type": "sitelink",
+        "sitelink_id": "S200313"
+      },
+      "evidence_contains": {
+        "ad_id": "A20031",
+        "extension_type": "sitelink",
+        "matched_date_text": "31.12.2025",
+        "parsed_date": "2025-12-31"
+      }
+    },
+    {
+      "finding_key": "A20031_EXPIRED_DATE_IN_EXTENSIONS_CALLOUT",
+      "rule_code": "EXPIRED_DATE_IN_EXTENSIONS",
+      "level": "L1",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad_extension",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2003",
+        "ad_id": "A20031",
+        "extension_type": "callout"
+      },
+      "evidence_contains": {
+        "ad_id": "A20031",
+        "extension_type": "callout",
+        "matched_date_text": "31.12.2025",
+        "parsed_date": "2025-12-31"
+      }
+    },
+    {
+      "finding_key": "A20031_BROKEN_SITELINK_URL",
+      "rule_code": "BROKEN_SITELINK_URL",
+      "level": "L3",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad_extension",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2003",
+        "ad_id": "A20031"
+      },
+      "evidence_contains": {
+        "ad_id": "A20031",
+        "broken_sitelinks": ["S200313"]
+      }
+    },
+    {
+      "finding_key": "S200313_MISSING_REQUIRED_UTM",
+      "rule_code": "MISSING_REQUIRED_UTM",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2003",
+        "ad_id": "A20031",
+        "sitelink_id": "S200313",
+        "url_field": "ad.sitelinks[].url"
+      },
+      "evidence_contains": {
+        "missing_utm_params": ["utm_source", "utm_medium", "utm_campaign", "utm_content"]
+      }
+    },
+    {
+      "finding_key": "S200314_INVALID_UTM",
+      "rule_code": "INVALID_UTM",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2003",
+        "ad_id": "A20031",
+        "sitelink_id": "S200314",
+        "url_field": "ad.sitelinks[].url"
+      },
+      "evidence_contains": {
+        "utm_validation_errors": ["empty_value:utm_campaign"]
+      }
+    },
+    {
+      "finding_key": "A20031_MAIN_AND_SITELINK_DOMAINS_MISMATCH",
+      "rule_code": "MAIN_AND_SITELINK_DOMAINS_MISMATCH",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2003",
+        "ad_id": "A20031"
+      },
+      "evidence_contains": {
+        "main_domain": "main.example.com",
+        "sitelink_domains": ["other.example.com", "qa-broken-link.invalid"]
+      }
+    },
+    {
+      "finding_key": "S200314_EMPTY_OR_TECHNICAL_URL_PARAMS",
+      "rule_code": "EMPTY_OR_TECHNICAL_URL_PARAMS",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2003",
+        "ad_id": "A20031",
+        "sitelink_id": "S200314",
+        "url_field": "ad.sitelinks[].url"
+      },
+      "evidence_contains": {
+        "invalid_params": ["utm_campaign", "price"]
+      }
+    },
+    {
+      "finding_key": "A20041_ACTIVE_AD_REJECTED_OR_RESTRICTED",
+      "rule_code": "ACTIVE_AD_REJECTED_OR_RESTRICTED",
+      "level": "L1",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2004",
+        "ad_id": "A20041"
+      },
+      "evidence_contains": {
+        "ad_id": "A20041",
+        "moderation_status": "limited"
+      }
+    },
+    {
+      "finding_key": "A20041_EXPIRED_DATE_IN_AD_TEXT",
+      "rule_code": "EXPIRED_DATE_IN_AD_TEXT",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2004",
+        "ad_id": "A20041"
+      },
+      "evidence_contains": {
+        "ad_id": "A20041",
+        "matched_date_text": "Сдача в 2025",
+        "parsed_date": "2025"
+      }
+    },
+    {
+      "finding_key": "A20041_PAST_YEAR_IN_TEXT",
+      "rule_code": "PAST_YEAR_IN_TEXT",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2004",
+        "ad_id": "A20041"
+      },
+      "evidence_contains": {
+        "ad_id": "A20041",
+        "matched_years": [2025]
+      }
+    },
+    {
+      "finding_key": "A20041_UNRESOLVED_PLACEHOLDER_IN_TEXT",
+      "rule_code": "UNRESOLVED_PLACEHOLDER_IN_TEXT",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2004",
+        "ad_id": "A20041"
+      },
+      "evidence_contains": {
+        "ad_id": "A20041",
+        "matched_placeholder": "{mortgage_rate}"
+      }
+    },
+    {
+      "finding_key": "A20051_MISSING_REQUIRED_UTM",
+      "rule_code": "MISSING_REQUIRED_UTM",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2005",
+        "ad_id": "A20051",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "missing_utm_params": ["utm_medium", "utm_content"]
+      }
+    },
+    {
+      "finding_key": "S200511_MISSING_REQUIRED_UTM",
+      "rule_code": "MISSING_REQUIRED_UTM",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_id": "G2005",
+        "ad_id": "A20051",
+        "sitelink_id": "S200511",
+        "url_field": "ad.sitelinks[].url"
+      },
+      "evidence_contains": {
+        "missing_utm_params": ["utm_medium", "utm_content"]
+      }
+    },
+    {
+      "finding_key": "A30011_FINAL_DOMAIN_DIFFERS_AFTER_REDIRECT",
+      "rule_code": "FINAL_DOMAIN_DIFFERS_AFTER_REDIRECT",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C300",
+        "group_id": "G3001",
+        "ad_id": "A30011",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "source_domain": "qa-domain-switch.example",
+        "final_domain": "landing.other-domain.example"
+      }
+    },
+    {
+      "finding_key": "A30011_HTTP_USED_INSTEAD_OF_HTTPS",
+      "rule_code": "HTTP_USED_INSTEAD_OF_HTTPS",
+      "level": "L3",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C300",
+        "group_id": "G3001",
+        "ad_id": "A30011",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "checked_url": "http://qa-domain-switch.example/start?utm_source=yandex&utm_medium=cpc&utm_campaign=C300&utm_content=A30011",
+        "https_available": true
+      }
+    },
+    {
+      "finding_key": "S300111_HTTP_USED_INSTEAD_OF_HTTPS",
+      "rule_code": "HTTP_USED_INSTEAD_OF_HTTPS",
+      "level": "L3",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C300",
+        "group_id": "G3001",
+        "ad_id": "A30011",
+        "sitelink_id": "S300111",
+        "url_field": "ad.sitelinks[].url"
+      },
+      "evidence_contains": {
+        "checked_url": "http://qa-http-available.example/flats?utm_source=yandex&utm_medium=cpc&utm_campaign=C300&utm_content=S300111",
+        "https_available": true
+      }
+    },
+    {
+      "finding_key": "A30011_MAIN_AND_SITELINK_DOMAINS_MISMATCH",
+      "rule_code": "MAIN_AND_SITELINK_DOMAINS_MISMATCH",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C300",
+        "group_id": "G3001",
+        "ad_id": "A30011"
+      },
+      "evidence_contains": {
+        "main_domain": "qa-domain-switch.example",
+        "sitelink_domains": ["qa-http-available.example"]
+      }
+    },
+    {
+      "finding_key": "C400_CONVERSION_STRATEGY_WITHOUT_METRIKA",
+      "rule_code": "CONVERSION_STRATEGY_WITHOUT_METRIKA",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "campaign",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C400"
+      },
+      "evidence_contains": {
+        "campaign_id": "C400",
+        "strategy_type": "target_cpa",
+        "metrika_counter_id": null
+      }
+    },
+    {
+      "finding_key": "C400_CONVERSION_STRATEGY_WITHOUT_GOAL",
+      "rule_code": "CONVERSION_STRATEGY_WITHOUT_GOAL",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "campaign",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C400"
+      },
+      "evidence_contains": {
+        "campaign_id": "C400",
+        "strategy_type": "target_cpa",
+        "goal_ids": []
+      }
+    },
+    {
+      "finding_key": "C410_CONVERSION_STRATEGY_WITH_UNAVAILABLE_GOAL",
+      "rule_code": "CONVERSION_STRATEGY_WITH_UNAVAILABLE_GOAL",
+      "level": "L1",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "campaign",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C410"
+      },
+      "evidence_contains": {
+        "campaign_id": "C410",
+        "goal_id": "goal_deleted",
+        "goal_status": "deleted",
+        "goal_access": "revoked"
+      }
+    },
+    {
+      "finding_key": "C420_CONVERSION_STRATEGY_WITHOUT_LEARNING_DATA",
+      "rule_code": "CONVERSION_STRATEGY_WITHOUT_LEARNING_DATA",
+      "level": "L2",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "campaign",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C420"
+      },
+      "evidence_contains": {
+        "campaign_id": "C420",
+        "strategy_type": "target_cpa",
+        "analysis_period_days": 30,
+        "conversions": 3,
+        "required_min_conversions": 10
+      }
+    },
+    {
+      "finding_key": "C430_CAMPAIGN_CHRONIC_BUDGET_LIMIT",
+      "rule_code": "CAMPAIGN_CHRONIC_BUDGET_LIMIT",
+      "level": "L2",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "campaign",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C430"
+      },
+      "evidence_contains": {
+        "campaign_id": "C430",
+        "analysis_period_days": 30,
+        "budget_limited_days": 24,
+        "avg_hour_of_budget_exhaustion": 11
+      }
+    },
+    {
+      "finding_key": "A50012_MISSING_REQUIRED_EXTENSIONS",
+      "rule_code": "MISSING_REQUIRED_EXTENSIONS",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50012"
+      },
+      "evidence_contains": {
+        "ad_id": "A50012",
+        "missing_extensions": ["sitelinks", "callouts"]
+      }
+    },
+    {
+      "finding_key": "A50013_MISSING_REQUIRED_EXTENSIONS",
+      "rule_code": "MISSING_REQUIRED_EXTENSIONS",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50013"
+      },
+      "evidence_contains": {
+        "ad_id": "A50013",
+        "missing_extensions": ["sitelinks", "callouts"]
+      }
+    },
+    {
+      "finding_key": "A50014_MISSING_REQUIRED_EXTENSIONS",
+      "rule_code": "MISSING_REQUIRED_EXTENSIONS",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50014"
+      },
+      "evidence_contains": {
+        "ad_id": "A50014",
+        "missing_extensions": ["sitelinks", "callouts"]
+      }
+    },
+    {
+      "finding_key": "A50015_MISSING_REQUIRED_EXTENSIONS",
+      "rule_code": "MISSING_REQUIRED_EXTENSIONS",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50015"
+      },
+      "evidence_contains": {
+        "ad_id": "A50015",
+        "missing_extensions": ["sitelinks", "callouts"]
+      }
+    },
+    {
+      "finding_key": "A50016_MISSING_REQUIRED_EXTENSIONS",
+      "rule_code": "MISSING_REQUIRED_EXTENSIONS",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50016"
+      },
+      "evidence_contains": {
+        "ad_id": "A50016",
+        "missing_extensions": ["sitelinks", "callouts"]
+      }
+    },
+    {
+      "finding_key": "A50018_MISSING_REQUIRED_EXTENSIONS",
+      "rule_code": "MISSING_REQUIRED_EXTENSIONS",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50018"
+      },
+      "evidence_contains": {
+        "ad_id": "A50018",
+        "missing_extensions": ["sitelinks", "callouts"]
+      }
+    },
+    {
+      "finding_key": "A50020_MISSING_REQUIRED_EXTENSIONS",
+      "rule_code": "MISSING_REQUIRED_EXTENSIONS",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50020"
+      },
+      "evidence_contains": {
+        "ad_id": "A50020",
+        "missing_extensions": ["sitelinks", "callouts"]
+      }
+    },
+    {
+      "finding_key": "A50021_MISSING_REQUIRED_EXTENSIONS",
+      "rule_code": "MISSING_REQUIRED_EXTENSIONS",
+      "level": "L1",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50021"
+      },
+      "evidence_contains": {
+        "ad_id": "A50021",
+        "missing_extensions": ["sitelinks", "callouts"]
+      }
+    },
+    {
+      "finding_key": "A50012_FINAL_URL_HTTP_ERROR",
+      "rule_code": "FINAL_URL_HTTP_ERROR",
+      "level": "L3",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50012",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "checked_url": "https://qa-http-404.example/landing",
+        "status_code": 404
+      }
+    },
+    {
+      "finding_key": "A50013_FINAL_URL_DNS_TIMEOUT_CONNECTION_ERROR",
+      "rule_code": "FINAL_URL_DNS_TIMEOUT_CONNECTION_ERROR",
+      "level": "L3",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50013",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "checked_url": "https://qa-dns-fail.invalid/",
+        "network_error": "dns_resolution_failed"
+      }
+    },
+    {
+      "finding_key": "A50014_FINAL_URL_SSL_TLS_ERROR",
+      "rule_code": "FINAL_URL_SSL_TLS_ERROR",
+      "level": "L3",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50014",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "checked_url": "https://qa-ssl-bad.example/",
+        "ssl_error": "certificate_expired"
+      }
+    },
+    {
+      "finding_key": "A50015_REDIRECT_LOOP",
+      "rule_code": "REDIRECT_LOOP",
+      "level": "L3",
+      "severity": "critical",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50015",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "checked_url": "https://qa-redirect-loop.example/start",
+        "redirect_chain": [
+          "https://qa-redirect-loop.example/start",
+          "https://qa-redirect-loop.example/step1",
+          "https://qa-redirect-loop.example/start"
+        ]
+      }
+    },
+    {
+      "finding_key": "A50016_REDIRECT_CHAIN_TOO_LONG",
+      "rule_code": "REDIRECT_CHAIN_TOO_LONG",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50016",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "checked_url": "https://qa-long-redirect.example/start",
+        "redirect_hops": 4
+      }
+    },
+    {
+      "finding_key": "A50012_MISSING_REQUIRED_UTM",
+      "rule_code": "MISSING_REQUIRED_UTM",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50012",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "missing_utm_params": ["utm_source", "utm_medium", "utm_campaign", "utm_content"]
+      }
+    },
+    {
+      "finding_key": "A50013_MISSING_REQUIRED_UTM",
+      "rule_code": "MISSING_REQUIRED_UTM",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50013",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "missing_utm_params": ["utm_source", "utm_medium", "utm_campaign", "utm_content"]
+      }
+    },
+    {
+      "finding_key": "A50014_MISSING_REQUIRED_UTM",
+      "rule_code": "MISSING_REQUIRED_UTM",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50014",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "missing_utm_params": ["utm_source", "utm_medium", "utm_campaign", "utm_content"]
+      }
+    },
+    {
+      "finding_key": "A50015_MISSING_REQUIRED_UTM",
+      "rule_code": "MISSING_REQUIRED_UTM",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50015",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "missing_utm_params": ["utm_source", "utm_medium", "utm_campaign", "utm_content"]
+      }
+    },
+    {
+      "finding_key": "A50016_MISSING_REQUIRED_UTM",
+      "rule_code": "MISSING_REQUIRED_UTM",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50016",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "missing_utm_params": ["utm_source", "utm_medium", "utm_campaign", "utm_content"]
+      }
+    },
+    {
+      "finding_key": "A50018_MISSING_REQUIRED_UTM",
+      "rule_code": "MISSING_REQUIRED_UTM",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50018",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "missing_utm_params": ["utm_source", "utm_medium", "utm_campaign", "utm_content"]
+      }
+    },
+    {
+      "finding_key": "A50020_MISSING_REQUIRED_UTM",
+      "rule_code": "MISSING_REQUIRED_UTM",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50020",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "missing_utm_params": ["utm_content"]
+      }
+    },
+    {
+      "finding_key": "A50020_INVALID_UTM",
+      "rule_code": "INVALID_UTM",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50020",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "utm_validation_errors": ["duplicate_param:utm_campaign", "empty_value:utm_campaign", "malformed_separator"]
+      }
+    },
+    {
+      "finding_key": "A50021_MISSING_REQUIRED_UTM",
+      "rule_code": "MISSING_REQUIRED_UTM",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50021",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "missing_utm_params": ["utm_source", "utm_medium", "utm_campaign", "utm_content"]
+      }
+    },
+    {
+      "finding_key": "A50018_HTTP_USED_INSTEAD_OF_HTTPS",
+      "rule_code": "HTTP_USED_INSTEAD_OF_HTTPS",
+      "level": "L3",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50018",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "checked_url": "http://qa-http-available.example/flats",
+        "https_available": true
+      }
+    },
+    {
+      "finding_key": "A50020_EMPTY_OR_TECHNICAL_URL_PARAMS",
+      "rule_code": "EMPTY_OR_TECHNICAL_URL_PARAMS",
+      "level": "L3",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "url",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C500",
+        "group_id": "G5001",
+        "ad_id": "A50020",
+        "url_field": "ad.url"
+      },
+      "evidence_contains": {
+        "invalid_params": ["utm_campaign", "price"]
+      }
+    }
+  ],
+  "heuristic_findings": [
+    {
+      "finding_key": "C200_DUPLICATE_KEYWORDS_WITH_OVERLAP_INTERNAL",
+      "rule_code": "DUPLICATE_KEYWORDS_WITH_OVERLAP",
+      "level": "L1",
+      "severity": "high",
+      "source": "ai_assisted",
+      "status": "new",
+      "matching_mode": "subset",
+      "entity_type": "keyword",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_ids": ["G2003", "G2004"]
+      },
+      "evidence_contains": {
+        "normalized_keyword": "купить квартиру москва",
+        "campaign_ids": ["C200"],
+        "group_ids": ["G2003", "G2004"]
+      }
+    },
+    {
+      "finding_key": "C200_GROUP_KEYWORD_OVERLAP_G2004_G2005",
+      "rule_code": "GROUP_KEYWORD_OVERLAP",
+      "level": "L1",
+      "severity": "high",
+      "source": "ai_assisted",
+      "status": "new",
+      "matching_mode": "subset",
+      "entity_type": "group",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_ids": ["G2004", "G2005"]
+      },
+      "evidence_contains": {
+        "campaign_id": "C200",
+        "group_ids": ["G2004", "G2005"],
+        "overlapping_keywords": ["купить квартиру москва", "купить квартиру москва центр", "новостройка москва", "новостройка москва центр"]
+      }
+    },
+    {
+      "finding_key": "C200_MISSING_CROSS_NEGATIVES_G2004_G2005",
+      "rule_code": "MISSING_CROSS_NEGATIVES",
+      "level": "L1",
+      "severity": "high",
+      "source": "ai_assisted",
+      "status": "new",
+      "matching_mode": "subset",
+      "entity_type": "group",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C200",
+        "group_ids": ["G2004", "G2005"]
+      },
+      "evidence_contains": {
+        "campaign_id": "C200",
+        "group_ids": ["G2004", "G2005"],
+        "required_negative_terms": ["центр"]
+      }
+    },
+    {
+      "finding_key": "C200_C300_DUPLICATE_KEYWORDS_WITH_OVERLAP",
+      "rule_code": "DUPLICATE_KEYWORDS_WITH_OVERLAP",
+      "level": "L1",
+      "severity": "high",
+      "source": "ai_assisted",
+      "status": "new",
+      "matching_mode": "subset",
+      "entity_type": "keyword",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_ids": ["C200", "C300"]
+      },
+      "evidence_contains": {
+        "campaign_ids": ["C200", "C300"],
+        "normalized_keyword": "купить квартиру москва"
+      }
+    },
+    {
+      "finding_key": "C310_GEO_TEXT_TARGETING_MISMATCH",
+      "rule_code": "GEO_TEXT_TARGETING_MISMATCH",
+      "level": "L1",
+      "severity": "high",
+      "source": "ai_assisted",
+      "status": "new",
+      "matching_mode": "subset",
+      "entity_type": "campaign",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C310",
+        "group_id": "G3101",
+        "ad_id": "A31011"
+      },
+      "evidence_contains": {
+        "campaign_id": "C310",
+        "ad_id": "A31011",
+        "text_geo_entities": ["Москва", "Москвы"],
+        "campaign_geo": ["Санкт-Петербург", "Ленинградская область"]
+      }
+    },
+    {
+      "finding_key": "C200_C300_CAMPAIGN_SELF_COMPETITION_BY_GEO_AND_SEMANTICS",
+      "rule_code": "CAMPAIGN_SELF_COMPETITION_BY_GEO_AND_SEMANTICS",
+      "level": "L1",
+      "severity": "high",
+      "source": "ai_assisted",
+      "status": "new",
+      "matching_mode": "subset",
+      "entity_type": "campaign",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_ids": ["C200", "C300"]
+      },
+      "evidence_contains": {
+        "campaign_ids": ["C200", "C300"],
+        "overlapping_geo": ["Москва", "Московская область"],
+        "overlapping_keywords": ["купить квартиру москва", "новостройка москва"]
+      }
+    },
+    {
+      "finding_key": "ACC001_INCONSISTENT_UTM_PATTERN",
+      "rule_code": "INCONSISTENT_UTM_PATTERN",
+      "level": "L1",
+      "severity": "warning",
+      "source": "ai_assisted",
+      "status": "new",
+      "matching_mode": "subset",
+      "entity_type": "account",
+      "refs": {
+        "account_id": "acc_001"
+      },
+      "evidence_contains": {
+        "account_id": "acc_001",
+        "campaign_ids": ["C200", "C300", "C500"],
+        "detected_patterns": [
+          "utm_source=yandex&utm_medium=cpc&utm_campaign=...&utm_content=...",
+          "utm_source=yd&utm_campaign=...",
+          "url_without_required_utm",
+          "utm_with_empty_or_duplicate_params"
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "exact_findings_count": 73,
+    "heuristic_findings_count": 7,
+    "total_expected_findings_count": 80
+  }
+}
