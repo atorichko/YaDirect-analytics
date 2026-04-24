@@ -11,6 +11,9 @@ from tests.fixture_loader import load_fixture_dict
 
 def _catalog_file_path() -> Path:
     here = Path(__file__).resolve()
+    bundled = here.parent / "fixtures" / "каталог правил.json"
+    if bundled.is_file():
+        return bundled
     for ancestor in here.parents:
         candidate = ancestor / "каталог правил.json"
         if candidate.is_file():

@@ -4,15 +4,23 @@ from pathlib import Path
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# config.py -> app/core -> app -> backend (apps/backend) -> apps -> repo root
-_candidate_root = Path(__file__).resolve().parents[4]
-_REPO_ROOT = _candidate_root if (_candidate_root / "docker-compose.yml").is_file() else Path(__file__).resolve().parents[2]
+def _find_repo_root_with_compose() -> Path | None:
+    """Monorepo: .../YaDirect-analytics/docker-compose.yml. In Docker image only /app/app — no parents[4]."""
+    here = Path(__file__).resolve().parent
+    for p in (here, *here.parents):
+        if (p / "docker-compose.yml").is_file():
+            return p
+    return None
+
+
+_REPO_ROOT = _find_repo_root_with_compose()
+_backend_root = Path(__file__).resolve().parents[2]
 _env_candidates: tuple[Path, ...] = tuple(
     p
     for p in (
-        _REPO_ROOT / ".env",
+        *([_REPO_ROOT / ".env"] if _REPO_ROOT is not None else ()),
         Path.cwd() / ".env",
-        Path(__file__).resolve().parents[2] / ".env",
+        _backend_root / ".env",
     )
     if p.is_file()
 )
