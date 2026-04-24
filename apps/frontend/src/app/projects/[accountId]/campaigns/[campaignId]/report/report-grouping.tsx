@@ -161,7 +161,7 @@ export function buildGroupedCampaignRows(visibleRows: CampaignFinding[], pageCam
     });
   }
 
-  const out = [...grouped, ...passThrough];
+  const out: DisplayRow[] = [...grouped, ...passThrough];
   out.sort((a, b) => {
     const ta = a.mergedSourceRows ? maxCreatedAtMs(a.mergedSourceRows) : +new Date(a.created_at);
     const tb = b.mergedSourceRows ? maxCreatedAtMs(b.mergedSourceRows) : +new Date(b.created_at);
