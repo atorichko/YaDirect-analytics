@@ -10,6 +10,15 @@ import { apiGet, apiPost } from "@/lib/api-client";
 import { getAccessToken } from "@/lib/auth";
 import { ruleTitleRu } from "@/lib/rule-titles-ru";
 
+import {
+  buildGroupedCampaignRows,
+  GroupedDetailsSection,
+  recommendationText,
+  rowUsesGroupedLayout,
+  type CampaignFinding,
+  type DisplayRow,
+} from "./report-grouping";
+
 type Campaign = { id: string; name: string | null };
 type JobResponse = { task_id: string; task_name: string; status: string };
 type JobStatus = {
@@ -21,32 +30,7 @@ type JobStatus = {
   current_step: string | null;
 };
 
-type Finding = {
-  id: string;
-  rule_code: string;
-  rule_name: string;
-  severity: string;
-  level: string;
-  group_external_id?: string | null;
-  ad_external_id?: string | null;
-  campaign_external_id?: string | null;
-  issue_location: string;
-  evidence?: Record<string, unknown> | null;
-  impact_ru: string;
-  recommendation_ru: string;
-  status: string;
-  ai_verdict?: Record<string, unknown> | null;
-  created_at: string;
-};
-
-type GroupedModerationAd = {
-  adId: string;
-  adTitle: string;
-};
-
-type DisplayRow = Finding & {
-  groupedModerationAds?: GroupedModerationAd[];
-};
+type Finding = CampaignFinding;
 
 type ActiveCatalogRule = {
   rule_code: string;
@@ -57,7 +41,6 @@ type ActiveCatalogResponse = {
   rules: ActiveCatalogRule[];
 };
 
-const RULE_ACTIVE_AD_REJECTED_OR_RESTRICTED = "ACTIVE_AD_REJECTED_OR_RESTRICTED";
 const RULE_ACTIVE_CAMPAIGN_WITHOUT_ACTIVE_GROUPS = "ACTIVE_CAMPAIGN_WITHOUT_ACTIVE_GROUPS";
 
 const EVIDENCE_LABEL_RU: Record<string, string> = {
@@ -256,30 +239,10 @@ export default function CampaignReportPage() {
     () => latestRows.filter((row) => (showFixed ? true : row.status !== "fixed")),
     [latestRows, showFixed],
   );
-  const displayRows = useMemo<DisplayRow[]>(() => {
-    const moderationRows = visibleRows.filter((row) => row.rule_code === RULE_ACTIVE_AD_REJECTED_OR_RESTRICTED);
-    const restRows = visibleRows.filter((row) => row.rule_code !== RULE_ACTIVE_AD_REJECTED_OR_RESTRICTED);
-    if (moderationRows.length === 0) return restRows;
-
-    const [leader, ...others] = moderationRows;
-    const groupedByAd = new Map<string, GroupedModerationAd>();
-    for (const item of [leader, ...others]) {
-      const adIdRaw = item.ad_external_id ?? item.evidence?.ad_id;
-      if (!adIdRaw) continue;
-      const adId = String(adIdRaw);
-      const adTitleRaw = item.evidence?.ad_title;
-      const adTitle = String(adTitleRaw ?? "").trim() || "Название объявления недоступно";
-      if (!groupedByAd.has(adId)) {
-        groupedByAd.set(adId, { adId, adTitle });
-      }
-    }
-
-    const groupedModeration: DisplayRow = {
-      ...leader,
-      groupedModerationAds: Array.from(groupedByAd.values()).sort((a, b) => a.adId.localeCompare(b.adId)),
-    };
-    return [groupedModeration, ...restRows];
-  }, [visibleRows]);
+  const displayRows = useMemo<DisplayRow[]>(
+    () => buildGroupedCampaignRows(visibleRows, campaignId),
+    [visibleRows, campaignId],
+  );
   const fixedHiddenCount = useMemo(() => {
     if (showFixed) return 0;
     return latestRows.filter((row) => row.status === "fixed" && !row.ai_verdict).length;
@@ -424,7 +387,7 @@ export default function CampaignReportPage() {
           <tbody>
             {displayRows.map((row) => {
               const title = ruleTitleRu(row.rule_code, row.rule_name);
-              const isModerationRule = row.rule_code === RULE_ACTIVE_AD_REJECTED_OR_RESTRICTED;
+              const groupedLayout = rowUsesGroupedLayout(row);
               const loc = [
                 row.campaign_external_id ? `камп. ${row.campaign_external_id}` : null,
                 row.group_external_id ? `гр. ${row.group_external_id}` : null,
@@ -433,7 +396,7 @@ export default function CampaignReportPage() {
                 .filter(Boolean)
                 .join(", ");
               return (
-                <tr key={row.id} className="border-t">
+                <tr key={groupedLayout ? `grp:${row.rule_code}:${campaignId}` : row.id} className="border-t">
                   <td className="px-3 py-2 align-top">
                     <details className="group rounded-md border border-transparent open:border-border open:bg-muted/30">
                       <summary className="cursor-pointer list-none px-1 py-2 [&::-webkit-details-marker]:hidden">
@@ -444,7 +407,7 @@ export default function CampaignReportPage() {
                           <span className={row.status === "existing" ? "text-xs font-semibold text-red-600" : "text-xs text-muted-foreground"}>
                             {statusRu(row.status)}
                           </span>
-                          {loc && !isModerationRule ? <span className="text-xs text-blue-800">Объекты: {loc}</span> : null}
+                          {loc && !groupedLayout ? <span className="text-xs text-blue-800">Объекты: {loc}</span> : null}
                           <span className="ml-auto text-xs text-muted-foreground">
                             {new Date(row.created_at).toLocaleString("ru-RU")}
                           </span>
@@ -453,20 +416,10 @@ export default function CampaignReportPage() {
                       </summary>
                       <div className="border-t px-3 py-2">
                         <p className="text-xs font-medium text-muted-foreground">Рекомендация</p>
-                        {isModerationRule ? (
+                        {groupedLayout ? (
                           <>
-                            <p className="text-sm">Исправить объявление по замечаниям модерации.</p>
-                            <p className="mt-2 text-xs font-medium text-muted-foreground">Детали:</p>
-                            <div className="text-sm text-foreground">
-                              <p>Объявления, не прошедшие модерацию:</p>
-                              <ul className="mt-1 list-inside list-disc">
-                                {(row.groupedModerationAds ?? []).map((item) => (
-                                  <li key={item.adId}>
-                                    {item.adId} - {item.adTitle}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
+                            <p className="text-sm">{recommendationText(row, catalogRecommendations)}</p>
+                            <GroupedDetailsSection row={row} />
                           </>
                         ) : (
                           <>

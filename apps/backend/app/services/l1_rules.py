@@ -75,6 +75,23 @@ def _is_servable_yandex_ad(ad: dict[str, Any]) -> bool:
     return _is_active(ad.get("status")) or _is_active(ad.get("state"))
 
 
+def _is_structurally_enabled_yandex_ad(ad: dict[str, Any]) -> bool:
+    """Ad is enabled in the snapshot (ON/active), but may still be not_eligible for moderation."""
+    state = str(ad.get("state") or "").strip().lower()
+    if state in {"archived", "deleted"}:
+        return False
+    if state in {"off", "suspended"}:
+        return False
+    if state in {"on", "yes", "active", "enabled"}:
+        return True
+    status = str(ad.get("status") or "").strip().lower()
+    if status in {"archived", "deleted"}:
+        return False
+    if status in {"accepted"}:
+        return True
+    return _is_active(ad.get("status")) or _is_active(ad.get("state"))
+
+
 def _is_servable_yandex_keyword(keyword: dict[str, Any]) -> bool:
     state = str(keyword.get("state") or "").strip().lower()
     if state in {"off", "suspended", "archived", "deleted"}:
@@ -256,6 +273,7 @@ def _active_group_without_active_ads(ctx: L1Context, rule: dict[str, Any]) -> li
                 evidence={
                     "campaign_id": group.get("campaign_id"),
                     "group_id": group_id,
+                    "group_name": group.get("name"),
                     "active_ads_count": 0,
                     "ads_count": len(ads_by_group.get(group_id, [])),
                 },
@@ -289,6 +307,7 @@ def _active_group_without_targeting(ctx: L1Context, rule: dict[str, Any]) -> lis
                 evidence={
                     "campaign_id": group.get("campaign_id"),
                     "group_id": group_id,
+                    "group_name": group.get("name"),
                     "active_keywords_count": 0,
                 },
                 impact_ru="Группа активна, но не содержит рабочих таргетинговых сущностей.",
@@ -571,7 +590,7 @@ def _missing_required_extensions(ctx: L1Context, rule: dict[str, Any]) -> list[F
 def _active_ad_rejected_or_restricted(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
     out: list[FindingDraft] = []
     for ad in ctx.ads:
-        if not _is_servable_yandex_ad(ad):
+        if not _is_structurally_enabled_yandex_ad(ad):
             continue
         moderation = str(ad.get("moderation_status") or "").lower()
         serving = str(ad.get("serving_status") or "").lower()
@@ -606,7 +625,7 @@ def _group_all_ads_rejected(ctx: L1Context, rule: dict[str, Any]) -> list[Findin
         if not _is_servable_ad_group(group):
             continue
         group_id = str(group.get("id"))
-        ads = [a for a in by_group.get(group_id, []) if _is_servable_yandex_ad(a)]
+        ads = [a for a in by_group.get(group_id, []) if _is_structurally_enabled_yandex_ad(a)]
         if not ads:
             continue
         all_rejected = True
@@ -628,6 +647,7 @@ def _group_all_ads_rejected(ctx: L1Context, rule: dict[str, Any]) -> list[Findin
                 evidence={
                     "campaign_id": group.get("campaign_id"),
                     "group_id": group_id,
+                    "group_name": group.get("name"),
                     "ad_ids": sorted(str(a.get("id")) for a in ads),
                 },
                 impact_ru="Все активные объявления в группе отклонены/ограничены, группа не может эффективно откручиваться.",
@@ -870,6 +890,7 @@ def _missing_cross_negatives(ctx: L1Context, rule: dict[str, Any]) -> list[Findi
                     evidence={
                         "campaign_id": campaign_id,
                         "group_id": g_id,
+                        "group_name": g.get("name"),
                         "missing_negative_tokens": sorted(missing),
                     },
                     impact_ru="Отсутствует кросс-минусовка между группами, трафик пересекается и дорожает.",
