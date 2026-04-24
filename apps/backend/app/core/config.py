@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     yandex_oauth_client_id: str = Field(default="", validation_alias="YANDEX_OAUTH_CLIENT_ID")
     yandex_oauth_client_secret: str = Field(default="", validation_alias="YANDEX_OAUTH_CLIENT_SECRET")
     yandex_oauth_redirect_uri: str = Field(default="", validation_alias="YANDEX_OAUTH_REDIRECT_URI")
+    oauth_token_encryption_key: str = Field(default="", validation_alias="OAUTH_TOKEN_ENCRYPTION_KEY")
     sabotage_reopen_window_days: int = Field(default=14, validation_alias="SABOTAGE_REOPEN_WINDOW_DAYS")
     weekly_cron_minute: str = Field(default="0", validation_alias="WEEKLY_CRON_MINUTE")
     weekly_cron_hour: str = Field(default="3", validation_alias="WEEKLY_CRON_HOUR")

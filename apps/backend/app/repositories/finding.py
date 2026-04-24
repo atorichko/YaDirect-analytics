@@ -54,3 +54,23 @@ class FindingRepository:
             stmt = stmt.where(Finding.campaign_external_id == campaign_external_id)
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_by_id(self, finding_id: UUID) -> Finding | None:
+        result = await self._session.execute(select(Finding).where(Finding.id == finding_id))
+        return result.scalar_one_or_none()
+
+    async def list_by_fingerprint(
+        self,
+        *,
+        account_id: UUID,
+        fingerprint: str,
+        limit: int = 200,
+    ) -> list[Finding]:
+        stmt = (
+            select(Finding)
+            .where(Finding.account_id == account_id, Finding.fingerprint == fingerprint)
+            .order_by(Finding.created_at.desc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())

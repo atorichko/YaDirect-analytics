@@ -43,3 +43,10 @@ class FindingOut(BaseModel):
     status: str
     suspected_sabotage: bool
     created_at: datetime
+
+
+class FindingDetailOut(FindingOut):
+    audit_id: UUID
+    fingerprint: str
+    ai_verdict: dict | None = None
+    updated_at: datetime

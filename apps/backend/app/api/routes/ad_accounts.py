@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import asyncio
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote_plus, urlsplit, urlunsplit
 from secrets import token_urlsafe
@@ -23,6 +24,8 @@ from app.models.entity_snapshot import SnapshotEntityType
 
 router = APIRouter(prefix="/ad-accounts", tags=["ad-accounts"])
 STATE_TTL_MINUTES = 15
+HTTP_RETRY_ATTEMPTS = 3
+HTTP_RETRY_BACKOFF_SECONDS = 0.7
 
 
 @router.get("", response_model=list[AdAccountOut])
@@ -241,9 +244,10 @@ async def sync_account_campaigns(
 
     # Avoid extra Direct API /clients calls on every sync.
     # Login refresh is needed mostly for temporary fallback logins.
+    access_token = creds.get_access_token(credential)
     if account.login.startswith("direct_"):
         refreshed_login = await _resolve_direct_login(
-            access_token=credential.access_token_encrypted,
+            access_token=access_token,
             fallback_login=account.login,
         )
         if refreshed_login and refreshed_login != account.login:
@@ -252,22 +256,22 @@ async def sync_account_campaigns(
                 account.login = refreshed_login
 
     campaigns = await _fetch_direct_campaigns(
-        access_token=credential.access_token_encrypted,
+        access_token=access_token,
         client_login=account.login,
     )
     campaign_ids = [int(item.get("Id")) for item in campaigns if item.get("Id") is not None]
     ad_groups = await _fetch_direct_ad_groups(
-        access_token=credential.access_token_encrypted,
+        access_token=access_token,
         client_login=account.login,
         campaign_ids=campaign_ids,
     )
     ads = await _fetch_direct_ads(
-        access_token=credential.access_token_encrypted,
+        access_token=access_token,
         client_login=account.login,
         campaign_ids=campaign_ids,
     )
     keywords = await _fetch_direct_keywords(
-        access_token=credential.access_token_encrypted,
+        access_token=access_token,
         client_login=account.login,
         campaign_ids=campaign_ids,
     )
@@ -411,8 +415,9 @@ async def _exchange_code_for_token(
     redirect_uri: str,
 ) -> dict:
     async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.post(
-            "https://oauth.yandex.ru/token",
+        resp = await _post_with_retry(
+            client=client,
+            url="https://oauth.yandex.ru/token",
             data={
                 "grant_type": "authorization_code",
                 "code": code,
@@ -435,8 +440,9 @@ async def _exchange_code_for_token(
 
 async def _fetch_yandex_profile(*, access_token: str) -> dict:
     async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.get(
-            "https://login.yandex.ru/info",
+        resp = await _get_with_retry(
+            client=client,
+            url="https://login.yandex.ru/info",
             params={"format": "json"},
             headers={"Authorization": f"OAuth {access_token}"},
         )
@@ -471,7 +477,12 @@ async def _fetch_direct_campaigns(*, access_token: str, client_login: str) -> li
                     "FieldNames": ["Id", "Name", "State", "Type"],
                 },
             }
-            resp = await client.post(settings.yandex_direct_api_url.rstrip("/") + "/campaigns", headers=headers, json=body)
+            resp = await _post_with_retry(
+                client=client,
+                url=settings.yandex_direct_api_url.rstrip("/") + "/campaigns",
+                headers=headers,
+                json=body,
+            )
             if resp.status_code >= 400:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -509,7 +520,12 @@ async def _resolve_direct_login(*, access_token: str, fallback_login: str) -> st
     }
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(settings.yandex_direct_api_url.rstrip("/") + "/clients", headers=headers, json=body)
+            resp = await _post_with_retry(
+                client=client,
+                url=settings.yandex_direct_api_url.rstrip("/") + "/clients",
+                headers=headers,
+                json=body,
+            )
         if resp.status_code >= 400:
             return fallback_login
         payload = resp.json()
@@ -542,7 +558,12 @@ async def _fetch_direct_ad_groups(*, access_token: str, client_login: str, campa
                     "FieldNames": ["Id", "CampaignId", "Name", "Status", "ServingStatus"],
                 },
             }
-            resp = await client.post(settings.yandex_direct_api_url.rstrip("/") + "/adgroups", headers=headers, json=body)
+            resp = await _post_with_retry(
+                client=client,
+                url=settings.yandex_direct_api_url.rstrip("/") + "/adgroups",
+                headers=headers,
+                json=body,
+            )
             if resp.status_code >= 400:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST, detail=f"Yandex Direct adgroups failed: {resp.status_code} {resp.text}"
@@ -576,7 +597,12 @@ async def _fetch_direct_ads(*, access_token: str, client_login: str, campaign_id
                     "TextAdFieldNames": ["Title", "Title2", "Text", "Href", "Mobile"],
                 },
             }
-            resp = await client.post(settings.yandex_direct_api_url.rstrip("/") + "/ads", headers=headers, json=body)
+            resp = await _post_with_retry(
+                client=client,
+                url=settings.yandex_direct_api_url.rstrip("/") + "/ads",
+                headers=headers,
+                json=body,
+            )
             if resp.status_code >= 400:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Yandex Direct ads failed: {resp.status_code} {resp.text}")
             payload = resp.json()
@@ -607,7 +633,12 @@ async def _fetch_direct_keywords(*, access_token: str, client_login: str, campai
                     "FieldNames": ["Id", "CampaignId", "AdGroupId", "Keyword", "State", "Status"],
                 },
             }
-            resp = await client.post(settings.yandex_direct_api_url.rstrip("/") + "/keywords", headers=headers, json=body)
+            resp = await _post_with_retry(
+                client=client,
+                url=settings.yandex_direct_api_url.rstrip("/") + "/keywords",
+                headers=headers,
+                json=body,
+            )
             if resp.status_code >= 400:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST, detail=f"Yandex Direct keywords failed: {resp.status_code} {resp.text}"
@@ -629,3 +660,50 @@ def _to_project_redirect(*, ui_redirect: str, account_id: str) -> str:
     else:
         path = path.rstrip("/") + f"/projects/{account_id}"
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+async def _post_with_retry(
+    *,
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str] | None = None,
+    json: dict | None = None,
+    data: dict | None = None,
+) -> httpx.Response:
+    last_exc: Exception | None = None
+    for attempt in range(1, HTTP_RETRY_ATTEMPTS + 1):
+        try:
+            response = await client.post(url, headers=headers, json=json, data=data)
+            if response.status_code >= 500 and attempt < HTTP_RETRY_ATTEMPTS:
+                await asyncio.sleep(HTTP_RETRY_BACKOFF_SECONDS * attempt)
+                continue
+            return response
+        except httpx.HTTPError as exc:
+            last_exc = exc
+            if attempt == HTTP_RETRY_ATTEMPTS:
+                raise
+            await asyncio.sleep(HTTP_RETRY_BACKOFF_SECONDS * attempt)
+    raise RuntimeError("Unexpected retry loop termination") from last_exc
+
+
+async def _get_with_retry(
+    *,
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str] | None = None,
+    params: dict[str, str] | None = None,
+) -> httpx.Response:
+    last_exc: Exception | None = None
+    for attempt in range(1, HTTP_RETRY_ATTEMPTS + 1):
+        try:
+            response = await client.get(url, headers=headers, params=params)
+            if response.status_code >= 500 and attempt < HTTP_RETRY_ATTEMPTS:
+                await asyncio.sleep(HTTP_RETRY_BACKOFF_SECONDS * attempt)
+                continue
+            return response
+        except httpx.HTTPError as exc:
+            last_exc = exc
+            if attempt == HTTP_RETRY_ATTEMPTS:
+                raise
+            await asyncio.sleep(HTTP_RETRY_BACKOFF_SECONDS * attempt)
+    raise RuntimeError("Unexpected retry loop termination") from last_exc
