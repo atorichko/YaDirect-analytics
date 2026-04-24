@@ -60,7 +60,7 @@ class Settings(BaseSettings):
         validation_alias="JWT_SECRET_KEY",
     )
     jwt_algorithm: str = Field(default="HS256", validation_alias="JWT_ALGORITHM")
-    jwt_access_expire_minutes: int = Field(default=30, validation_alias="JWT_ACCESS_EXPIRE_MINUTES")
+    jwt_access_expire_minutes: int = Field(default=1440, validation_alias="JWT_ACCESS_EXPIRE_MINUTES")
     jwt_refresh_expire_days: int = Field(default=14, validation_alias="JWT_REFRESH_EXPIRE_DAYS")
     min_conversions_for_learning: int = Field(default=30, validation_alias="MIN_CONVERSIONS_FOR_LEARNING")
     chronic_budget_limited_days_threshold: int = Field(

@@ -36,7 +36,7 @@ export default function DashboardPage() {
         const accountsData = await apiGet<AdAccount[]>("/ad-accounts", token);
         setAccounts(accountsData);
       } catch {
-        setError("Сессия недействительна. Войдите снова.");
+        setError("Не удалось загрузить данные. Проверьте сеть и попробуйте обновить страницу.");
       }
     })();
   }, []);
