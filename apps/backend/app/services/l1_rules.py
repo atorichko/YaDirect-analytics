@@ -17,6 +17,10 @@ class L1Context:
     ads: list[dict[str, Any]]
     keywords: list[dict[str, Any]]
     extensions: list[dict[str, Any]]
+    # Full-account rows when ctx.campaigns/keywords are scoped to one campaign (cross-campaign rules).
+    account_campaigns: list[dict[str, Any]] | None = None
+    account_keywords: list[dict[str, Any]] | None = None
+    scoped_campaign_external_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -90,6 +94,36 @@ def _is_structurally_enabled_yandex_ad(ad: dict[str, Any]) -> bool:
     if status in {"accepted"}:
         return True
     return _is_active(ad.get("status")) or _is_active(ad.get("state"))
+
+
+def _group_autotargeting_enabled(group: dict[str, Any]) -> bool:
+    raw = str(group.get("autotargeting") or "").strip().lower()
+    return raw in {"enabled", "on", "yes", "true"}
+
+
+def _group_active_audiences_count(group: dict[str, Any]) -> int:
+    aud = group.get("audiences")
+    if not isinstance(aud, list) or not aud:
+        return 0
+    n = 0
+    for item in aud:
+        if not isinstance(item, dict):
+            n += 1
+            continue
+        st = str(item.get("status") or item.get("state") or "").strip().lower()
+        if st in {"archived", "deleted", "removed"}:
+            continue
+        if st in {"off", "paused", "suspended"}:
+            continue
+        if st in {"active", "on", "enabled", "accepted", "yes"}:
+            n += 1
+            continue
+        if _is_active(item.get("status")) or _is_active(item.get("state")):
+            n += 1
+            continue
+        if not st:
+            n += 1
+    return n
 
 
 def _is_servable_yandex_keyword(keyword: dict[str, Any]) -> bool:
@@ -297,9 +331,13 @@ def _active_group_without_targeting(ctx: L1Context, rule: dict[str, Any]) -> lis
         active_keywords = [kw for kw in keywords_by_group.get(group_id, []) if _is_servable_yandex_keyword(kw)]
         if active_keywords:
             continue
+        if _group_autotargeting_enabled(group):
+            continue
+        if _group_active_audiences_count(group) > 0:
+            continue
         output.append(
             FindingDraft(
-                entity_key=f"group:{group_id}",
+                entity_key=f"group:{group_id}:no_targeting",
                 issue_location=f"group:{group_id}",
                 campaign_external_id=str(group.get("campaign_id")),
                 group_external_id=group_id,
@@ -309,6 +347,8 @@ def _active_group_without_targeting(ctx: L1Context, rule: dict[str, Any]) -> lis
                     "group_id": group_id,
                     "group_name": group.get("name"),
                     "active_keywords_count": 0,
+                    "autotargeting": group.get("autotargeting"),
+                    "active_audiences_count": _group_active_audiences_count(group),
                 },
                 impact_ru="Группа активна, но не содержит рабочих таргетинговых сущностей.",
                 recommendation_ru=rule.get(
@@ -398,7 +438,7 @@ def _unresolved_placeholder_in_text(ctx: L1Context, rule: dict[str, Any]) -> lis
 def _duplicate_ads(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
     by_group: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
     for ad in ctx.ads:
-        if not _is_servable_yandex_ad(ad):
+        if not _is_structurally_enabled_yandex_ad(ad):
             continue
         group_id = str(ad.get("ad_group_id"))
         signature = "|".join(
@@ -901,14 +941,20 @@ def _missing_cross_negatives(ctx: L1Context, rule: dict[str, Any]) -> list[Findi
 
 
 def _campaign_self_competition_by_geo_and_semantics(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
+    kw_source = ctx.account_keywords if ctx.account_keywords is not None else ctx.keywords
     campaign_keywords: dict[str, set[str]] = defaultdict(set)
-    for kw in ctx.keywords:
+    for kw in kw_source:
         if not _is_servable_yandex_keyword(kw):
             continue
         campaign_id = str(kw.get("campaign_id"))
-        campaign_keywords[campaign_id].add(_normalize_keyword(str(kw.get("phrase") or kw.get("text") or "")))
-    campaigns = [c for c in ctx.campaigns if _is_active_yandex_campaign(c)]
+        norm = _normalize_keyword(str(kw.get("phrase") or kw.get("text") or ""))
+        if norm:
+            campaign_keywords[campaign_id].add(norm)
+    camp_source = ctx.account_campaigns if ctx.account_campaigns is not None else ctx.campaigns
+    campaigns = [c for c in camp_source if _is_active_yandex_campaign(c)]
+    campaigns.sort(key=lambda c: str(c.get("id")))
     out: list[FindingDraft] = []
+    scope = ctx.scoped_campaign_external_id
     for i in range(len(campaigns)):
         left = campaigns[i]
         left_id = str(left.get("id"))
@@ -925,11 +971,15 @@ def _campaign_self_competition_by_geo_and_semantics(ctx: L1Context, rule: dict[s
             kw_overlap = left_kw & right_kw
             if not geo_overlap or not kw_overlap:
                 continue
+            lo, hi = sorted([left_id, right_id])
+            attach_id = lo
+            if scope and (scope == left_id or scope == right_id):
+                attach_id = scope
             out.append(
                 FindingDraft(
-                    entity_key=f"campaign_overlap:{left_id}:{right_id}",
+                    entity_key=f"campaign_overlap:{lo}:{hi}",
                     issue_location=f"account:{ctx.account_id}",
-                    campaign_external_id=left_id,
+                    campaign_external_id=attach_id,
                     group_external_id=None,
                     ad_external_id=None,
                     evidence={

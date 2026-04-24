@@ -104,6 +104,7 @@ async def import_fixture(path: Path) -> dict:
                     "serving_status": g.get("serving_status"),
                     "autotargeting": g.get("autotargeting"),
                     "negative_keywords": g.get("negative_keywords") or [],
+                    "audiences": g.get("audiences") or [],
                 }
                 await snapshots.upsert_snapshot(
                     account_id=account.id,

@@ -18,7 +18,7 @@ from app.repositories.rule_catalog import RuleCatalogRepository
 from app.schemas.audit import RunL1AuditResponse
 from app.services.fingerprint_utils import evidence_signature
 from app.services.finding_history_service import FindingHistoryService
-from app.services.l1_rules import L1Context, build_l1_rule_registry
+from app.services.l1_rules import L1Context, _is_active_yandex_campaign, build_l1_rule_registry
 
 
 def _is_active_state(value: object) -> bool:
@@ -144,29 +144,54 @@ class L1AuditService:
         )
 
     async def _build_context(self, account_id: UUID, *, campaign_external_id: str | None = None) -> L1Context:
-        campaigns = self._latest_snapshots_as_dicts(
+        campaigns_all = self._latest_snapshots_as_dicts(
             await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.campaign)
         )
-        groups = self._latest_snapshots_as_dicts(
+        groups_all = self._latest_snapshots_as_dicts(
             await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad_group)
         )
-        ads = self._latest_snapshots_as_dicts(
+        ads_all = self._latest_snapshots_as_dicts(
             await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad)
         )
-        keywords = self._latest_snapshots_as_dicts(
+        keywords_all = self._latest_snapshots_as_dicts(
             await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.keyword)
         )
-        extensions = self._latest_snapshots_as_dicts(
+        extensions_all = self._latest_snapshots_as_dicts(
             await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.extension)
         )
+
+        groups_all = [
+            item
+            for item in groups_all
+            if str(item.get("status") or item.get("state") or "").lower() != "archived"
+        ]
+        active_group_ids_all = {str(item.get("id")) for item in groups_all if item.get("id") is not None}
+        keywords_for_competition = [
+            item
+            for item in keywords_all
+            if _is_active_state(item.get("state") or item.get("status"))
+            and str(item.get("ad_group_id")) in active_group_ids_all
+        ]
+        campaigns_for_competition = [c for c in campaigns_all if _is_active_yandex_campaign(c)]
+
+        campaigns = campaigns_all
+        groups = groups_all
+        ads = ads_all
+        keywords = keywords_all
+        extensions = extensions_all
+        account_campaigns: list[dict] | None = None
+        account_keywords: list[dict] | None = None
+        scoped: str | None = None
         if campaign_external_id:
+            scoped = campaign_external_id
+            account_campaigns = campaigns_for_competition
+            account_keywords = keywords_for_competition
             campaigns = [item for item in campaigns if str(item.get("id")) == campaign_external_id]
             groups = [item for item in groups if str(item.get("campaign_id")) == campaign_external_id]
             ads = [item for item in ads if str(item.get("campaign_id")) == campaign_external_id]
             keywords = [item for item in keywords if str(item.get("campaign_id")) == campaign_external_id]
             extensions = [item for item in extensions if str(item.get("campaign_id")) == campaign_external_id]
-        # Exclude archived groups and stopped ads from audit input.
-        groups = [item for item in groups if str(item.get("status") or item.get("state") or "").lower() != "archived"]
+
         active_group_ids = {str(item.get("id")) for item in groups if item.get("id") is not None}
         ads = [
             item
@@ -187,6 +212,9 @@ class L1AuditService:
             ads=ads,
             keywords=keywords,
             extensions=extensions,
+            account_campaigns=account_campaigns,
+            account_keywords=account_keywords,
+            scoped_campaign_external_id=scoped,
         )
 
     @staticmethod

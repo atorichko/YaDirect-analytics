@@ -157,3 +157,115 @@ def test_campaign_geo_overlaps_campaign_negatives_rule() -> None:
         extensions=[],
     )
     assert rule(paused, {}) == []
+
+
+def test_active_group_without_targeting_respects_autotargeting() -> None:
+    rule = build_l1_rule_registry()["ACTIVE_GROUP_WITHOUT_TARGETING"]
+    base_group = {
+        "id": "g1",
+        "campaign_id": "c1",
+        "status": "active",
+        "name": "G",
+        "autotargeting": "disabled",
+        "audiences": [],
+    }
+    ctx_flag = L1Context(
+        account_id="a",
+        campaigns=[{"id": "c1", "status": "active"}],
+        groups=[base_group],
+        ads=[],
+        keywords=[],
+        extensions=[],
+    )
+    assert len(rule(ctx_flag, {})) == 1
+
+    ctx_auto = L1Context(
+        account_id="a",
+        campaigns=[{"id": "c1", "status": "active"}],
+        groups=[{**base_group, "autotargeting": "enabled"}],
+        ads=[],
+        keywords=[],
+        extensions=[],
+    )
+    assert rule(ctx_auto, {}) == []
+
+
+def test_campaign_self_competition_uses_account_keyword_scope() -> None:
+    rule = build_l1_rule_registry()["CAMPAIGN_SELF_COMPETITION_BY_GEO_AND_SEMANTICS"]
+    ctx = L1Context(
+        account_id="acc",
+        campaigns=[{"id": "C200", "status": "active", "geo": ["Москва"]}],
+        groups=[],
+        ads=[],
+        keywords=[
+            {
+                "id": "k1",
+                "campaign_id": "C200",
+                "ad_group_id": "g1",
+                "text": "купить квартиру москва",
+                "status": "active",
+            },
+        ],
+        extensions=[],
+        account_campaigns=[
+            {"id": "C200", "status": "active", "geo": ["Москва"]},
+            {"id": "C300", "status": "active", "geo": ["Москва"]},
+        ],
+        account_keywords=[
+            {
+                "id": "k1",
+                "campaign_id": "C200",
+                "ad_group_id": "g1",
+                "text": "купить квартиру москва",
+                "status": "active",
+            },
+            {
+                "id": "k2",
+                "campaign_id": "C300",
+                "ad_group_id": "g2",
+                "text": "купить квартиру москва",
+                "status": "active",
+            },
+        ],
+        scoped_campaign_external_id="C200",
+    )
+    findings = rule(ctx, {})
+    assert len(findings) == 1
+    assert findings[0].campaign_external_id == "C200"
+    assert {findings[0].evidence["left_campaign_id"], findings[0].evidence["right_campaign_id"]} == {"C200", "C300"}
+
+
+def test_duplicate_ads_detects_not_eligible_pairs() -> None:
+    rule = build_l1_rule_registry()["DUPLICATE_ADS"]
+    ctx = L1Context(
+        account_id="a",
+        campaigns=[],
+        groups=[],
+        keywords=[],
+        extensions=[],
+        ads=[
+            {
+                "id": "a1",
+                "ad_group_id": "G2001",
+                "campaign_id": "C200",
+                "status": "active",
+                "serving_status": "not_eligible",
+                "title": "Same",
+                "text": "Same text",
+                "url": "https://x.com",
+            },
+            {
+                "id": "a2",
+                "ad_group_id": "G2001",
+                "campaign_id": "C200",
+                "status": "active",
+                "serving_status": "not_eligible",
+                "title": "Same",
+                "text": "Same text",
+                "url": "https://x.com",
+            },
+        ],
+    )
+    findings = rule(ctx, {})
+    assert len(findings) == 1
+    assert set(findings[0].evidence["ad_ids"]) == {"a1", "a2"}
