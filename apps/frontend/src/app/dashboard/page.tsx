@@ -18,6 +18,12 @@ export default function DashboardPage() {
   const [editingName, setEditingName] = useState("");
 
   useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.title = "Аккаунты | YaDirect Analytics";
+    }
+  }, []);
+
+  useEffect(() => {
     const token = getAccessToken();
     if (!token) {
       setError("Нет токена — выполните вход.");

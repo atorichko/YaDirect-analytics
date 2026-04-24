@@ -87,8 +87,9 @@ export default function ProjectPage() {
   const [campaignStatusMap, setCampaignStatusMap] = useState<Record<string, string>>({});
   const [openFindingCountByCampaign, setOpenFindingCountByCampaign] = useState<Record<string, number>>({});
   const [isRefreshingCampaigns, setIsRefreshingCampaigns] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
-  const loadProjectData = useCallback(async (activeToken: string) => {
+  const loadProjectData = useCallback(async (activeToken: string): Promise<{ totalOpen: number; campaignsCount: number }> => {
     const [accountsData, campaignsData, findingsData, autostartData, lastRunMap] = await Promise.all([
       apiGet<AdAccount[]>("/ad-accounts", activeToken),
       apiGet<Campaign[]>(`/ad-accounts/${accountId}/campaigns`, activeToken),
@@ -106,6 +107,7 @@ export default function ProjectPage() {
       openCounts[cid] = (openCounts[cid] ?? 0) + 1;
     }
     setOpenFindingCountByCampaign(openCounts);
+    const totalOpen = Object.values(openCounts).reduce((sum, value) => sum + value, 0);
     const map: Record<string, string> = {};
     for (const row of findingsData) {
       if (!row.campaign_external_id) continue;
@@ -120,7 +122,14 @@ export default function ProjectPage() {
     }
     setLastAuditMap(map);
     setAutostart(autostartData);
+    return { totalOpen, campaignsCount: campaignsData.length };
   }, [accountId]);
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.title = account?.name ? `Проект ${account.name} | YaDirect Analytics` : "Проект | YaDirect Analytics";
+    }
+  }, [account?.name]);
 
   useEffect(() => {
     if (!token) {
@@ -216,17 +225,26 @@ export default function ProjectPage() {
     try {
       setIsRefreshingCampaigns(true);
       setSyncWarning(null);
+      setSyncStatus("Запрос отправлен в Яндекс Директ. Загружаем кампании...");
       const result = await apiPost<{ synced_campaigns: number }>(`/ad-accounts/${accountId}/sync-campaigns`, token, {});
       setInfo(`Кампании обновлены из API Директа: ${result.synced_campaigns}.`);
       await loadProjectData(token);
+      setSyncStatus(`Синхронизация завершена: получено кампаний ${result.synced_campaigns}.`);
     } catch (syncErr) {
       const text = syncErr instanceof Error ? syncErr.message : String(syncErr);
+      setSyncStatus("Синхронизация ответила ошибкой. Проверяем локальные данные...");
+      const beforeCount = campaigns.length;
       if (text.includes("58") || text.toLowerCase().includes("незавершенная регистрация")) {
         setSyncWarning("Не удалось обновить кампании из API Директа. Используем сохраненные snapshot-данные.");
       } else {
         setSyncWarning("Не удалось обновить кампании из API Директа. Загружены локальные snapshot-данные.");
       }
-      await loadProjectData(token);
+      const loaded = await loadProjectData(token);
+      if (loaded.campaignsCount > beforeCount) {
+        setInfo(`Данные подтянулись после повторной проверки: ${loaded.campaignsCount} кампаний.`);
+        setSyncWarning(null);
+        setSyncStatus("Синхронизация в API завершилась с задержкой ответа, но данные в базе обновлены.");
+      }
     } finally {
       setIsRefreshingCampaigns(false);
     }
@@ -239,12 +257,12 @@ export default function ProjectPage() {
         try {
           const status = await apiGet<JobStatus>(`/audits/jobs/${accountAuditTaskId}`, token);
           if (status.ready) {
-            setAccountAuditStatus(
-              status.successful ? "Аудит завершен: отчет обновлен (100%)." : "Аудит остановлен из-за ошибки.",
-            );
+            let finalStatus = status.successful ? "Аудит завершен: отчет обновлен (100%)." : "Аудит остановлен из-за ошибки.";
             if (status.successful) {
-              await loadProjectData(token);
+              const loaded = await loadProjectData(token);
+              finalStatus = `Аудит завершен: отчет обновлен (100%). Найдено активных ошибок: ${loaded.totalOpen} по всем кампаниям.`;
             }
+            setAccountAuditStatus(finalStatus);
             setAccountAuditTaskId(null);
             return;
           }
@@ -329,14 +347,17 @@ export default function ProjectPage() {
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 px-6 py-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
+          <p className="mb-1 text-xs text-muted-foreground">
+            <Link href="/dashboard" className="hover:underline">
+              Аккаунты
+            </Link>{" "}
+            / <span>Проект</span>
+          </p>
           <h1 className="text-2xl font-semibold tracking-tight">Проект: {account?.name ?? "-"}</h1>
           {account ? <p className="text-sm text-muted-foreground">аккаунт в Директ: {account.login}</p> : null}
         </div>
         <div className="flex items-center gap-2">
           <SiteHelpLink />
-          <Button variant="secondary" asChild>
-            <Link href="/dashboard">К аккаунтам</Link>
-          </Button>
           <Button variant="outline" type="button" onClick={logout}>
             Выйти
           </Button>
@@ -346,6 +367,7 @@ export default function ProjectPage() {
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       {info ? <p className="text-sm text-emerald-600">{info}</p> : null}
       {accountAuditStatus ? <p className="text-sm text-blue-700">{accountAuditStatus}</p> : null}
+      {syncStatus ? <p className="text-sm text-blue-700">{syncStatus}</p> : null}
       {syncWarning ? (
         <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
           <p>{syncWarning}</p>

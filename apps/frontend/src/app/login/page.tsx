@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { getApiV1Base } from "@/lib/api-config";
@@ -13,6 +13,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.title = "Вход | YaDirect Analytics";
+    }
+  }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();

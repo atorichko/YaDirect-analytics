@@ -1,7 +1,12 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 
 import { Button } from "@/components/ui/button";
 import catalog from "@/data/rule-catalog.json";
+
+export const metadata: Metadata = {
+  title: "Справка по проверкам | YaDirect Analytics",
+};
 
 type CatalogRule = {
   rule_code: string;

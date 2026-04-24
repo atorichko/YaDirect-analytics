@@ -21,6 +21,7 @@ from app.repositories.finding import FindingRepository
 from app.repositories.rule_catalog import RuleCatalogRepository
 from app.schemas.audit import RunAIAuditResponse
 from app.core.ai_prompt_defaults import DEFAULT_AI_ANALYSIS_PROMPT_PREFIX
+from app.services.fingerprint_utils import evidence_signature
 from app.services.finding_history_service import FindingHistoryService
 
 
@@ -105,8 +106,8 @@ class AIAuditService:
                             latency_ms=result.latency_ms,
                         )
                         if verdict.result in {"fail", "needs_review"}:
-                            evidence_signature = self._evidence_signature(verdict.evidence)
-                            fingerprint = self._fingerprint(verdict.rule_code, verdict.entity_key, evidence_signature)
+                            signature = evidence_signature(verdict.evidence)
+                            fingerprint = self._fingerprint(verdict.rule_code, verdict.entity_key, signature)
                             findings_rows.append(
                                 Finding(
                                     audit_id=audit.id,
@@ -145,14 +146,16 @@ class AIAuditService:
                             error_message=str(exc),
                         )
 
-            fixed_rows = await self._history.apply_status_lifecycle(
-                account_id=account_id,
-                audit_id=audit.id,
-                level=None,
-                campaign_external_id=campaign_external_id,
-                current_findings=findings_rows,
-                require_ai_verdict_for_previous=True,
-            )
+            fixed_rows: list[Finding] = []
+            if entities:
+                fixed_rows = await self._history.apply_status_lifecycle(
+                    account_id=account_id,
+                    audit_id=audit.id,
+                    level=None,
+                    campaign_external_id=campaign_external_id,
+                    current_findings=findings_rows,
+                    require_ai_verdict_for_previous=True,
+                )
             await self._findings.bulk_create(findings_rows + fixed_rows)
             await self._audits.mark_completed(audit, datetime.now(timezone.utc))
             await self._session.commit()
@@ -236,10 +239,6 @@ class AIAuditService:
                 continue
             latest[row.entity_key] = row.normalized_snapshot or {}
         return list(latest.values())
-
-    @staticmethod
-    def _evidence_signature(evidence: dict) -> str:
-        return json.dumps(evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
     @staticmethod
     def _fingerprint(rule_code: str, entity_key: str, evidence_signature: str) -> str:

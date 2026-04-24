@@ -58,6 +58,12 @@ export default function SettingsPage() {
   const token = useMemo(() => getAccessToken(), []);
 
   useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.title = "Настройки | YaDirect Analytics";
+    }
+  }, []);
+
+  useEffect(() => {
     if (!token) {
       setError("Нет токена — выполните вход.");
       return;
@@ -206,6 +212,9 @@ export default function SettingsPage() {
         </div>
         <div className="flex items-center gap-2">
           <SiteHelpLink />
+          <Button variant="secondary" asChild>
+            <Link href="/handoff">Handoff</Link>
+          </Button>
           <Button variant="secondary" asChild>
             <Link href="/dashboard">Dashboard</Link>
           </Button>

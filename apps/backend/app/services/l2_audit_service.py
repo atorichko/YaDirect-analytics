@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -18,6 +17,7 @@ from app.repositories.entity_snapshot import EntitySnapshotRepository
 from app.repositories.finding import FindingRepository
 from app.repositories.rule_catalog import RuleCatalogRepository
 from app.schemas.audit import RunL2AuditResponse
+from app.services.fingerprint_utils import evidence_signature
 from app.services.finding_history_service import FindingHistoryService
 from app.services.l2_rules import L2Context, build_l2_rule_registry
 
@@ -73,8 +73,8 @@ class L2AuditService:
                 raw_rule.setdefault("budget_limited_days_threshold", settings.chronic_budget_limited_days_threshold)
                 drafts = handler(context, raw_rule)
                 for draft in drafts:
-                    evidence_signature = self._evidence_signature(draft.evidence)
-                    fingerprint = self._fingerprint(rule.rule_code, draft.entity_key, evidence_signature)
+                    signature = evidence_signature(draft.evidence)
+                    fingerprint = self._fingerprint(rule.rule_code, draft.entity_key, signature)
                     findings_rows.append(
                         Finding(
                             audit_id=audit.id,
@@ -98,13 +98,16 @@ class L2AuditService:
                         )
                     )
 
-            fixed_rows = await self._history.apply_status_lifecycle(
-                account_id=account_id,
-                audit_id=audit.id,
-                level=FindingLevel.L2,
-                campaign_external_id=campaign_external_id,
-                current_findings=findings_rows,
-            )
+            can_close_previous = bool(context.campaigns)
+            fixed_rows: list[Finding] = []
+            if can_close_previous:
+                fixed_rows = await self._history.apply_status_lifecycle(
+                    account_id=account_id,
+                    audit_id=audit.id,
+                    level=FindingLevel.L2,
+                    campaign_external_id=campaign_external_id,
+                    current_findings=findings_rows,
+                )
             await self._findings.bulk_create(findings_rows + fixed_rows)
             await self._audits.mark_completed(audit, datetime.now(timezone.utc))
             await self._logs.create(
@@ -164,10 +167,6 @@ class L2AuditService:
                 continue
             latest[row.entity_key] = row.normalized_snapshot or {}
         return list(latest.values())
-
-    @staticmethod
-    def _evidence_signature(evidence: dict) -> str:
-        return json.dumps(evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
     @staticmethod
     def _fingerprint(rule_code: str, entity_key: str, evidence_signature: str) -> str:

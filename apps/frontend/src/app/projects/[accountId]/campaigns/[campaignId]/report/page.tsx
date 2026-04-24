@@ -142,6 +142,13 @@ export default function CampaignReportPage() {
   const [auditRunning, setAuditRunning] = useState(false);
   const levels = ["L1", "L2", "L3", "AI"] as const;
 
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      const campaignTitle = campaignName ?? campaignId;
+      document.title = `Отчет кампании ${campaignTitle} | YaDirect Analytics`;
+    }
+  }, [campaignId, campaignName]);
+
   async function loadReport(activeToken: string) {
     const [findings, campaigns] = await Promise.all([
       apiGet<Finding[]>(`/findings?account_id=${accountId}&campaign_id=${encodeURIComponent(campaignId)}&limit=500`, activeToken),
@@ -271,6 +278,16 @@ export default function CampaignReportPage() {
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 px-6 py-10">
       <div className="flex items-center justify-between">
         <div>
+          <p className="mb-1 text-xs text-muted-foreground">
+            <Link href="/dashboard" className="hover:underline">
+              Аккаунты
+            </Link>{" "}
+            /{" "}
+            <Link href={`/projects/${accountId}`} className="hover:underline">
+              Проект
+            </Link>{" "}
+            / <span>Отчет кампании</span>
+          </p>
           <h1 className="text-2xl font-semibold tracking-tight">Отчет кампании: {campaignName ?? campaignId}</h1>
           <p className="text-sm text-muted-foreground">ID кампании: {campaignId}</p>
         </div>
@@ -281,9 +298,6 @@ export default function CampaignReportPage() {
               ▶ Запустить аудит
             </Button>
           </span>
-          <Button variant="secondary" asChild>
-            <Link href={`/projects/${accountId}`}>К кампаниям</Link>
-          </Button>
         </div>
       </div>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
