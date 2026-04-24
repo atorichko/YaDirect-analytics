@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { SiteHelpLink } from "@/components/site-help-link";
+import { AppSectionNav } from "@/components/app-section-nav";
 import { Button } from "@/components/ui/button";
 import type { AdAccount, Me } from "@/features/dashboard/types";
-import { clearSession, getAccessToken } from "@/lib/auth";
+import { getAccessToken } from "@/lib/auth";
 import { apiDelete, apiGet, apiPut } from "@/lib/api-client";
 
 export default function DashboardPage() {
@@ -40,12 +40,6 @@ export default function DashboardPage() {
       }
     })();
   }, []);
-
-  function logout() {
-    clearSession();
-    const prefix = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/$/, "");
-    window.location.href = `${prefix}/login`;
-  }
 
   async function removeAccount(accountId: string) {
     const token = getAccessToken();
@@ -108,20 +102,7 @@ export default function DashboardPage() {
             </p>
           ) : null}
         </div>
-        <div className="flex items-center gap-2">
-          <SiteHelpLink />
-          <Button variant="secondary" asChild>
-            <Link href="/rules">Правила</Link>
-          </Button>
-          {me?.role === "admin" ? (
-            <Button variant="secondary" asChild>
-              <Link href="/settings">Настройки</Link>
-            </Button>
-          ) : null}
-          <Button variant="outline" type="button" onClick={logout}>
-            Выйти
-          </Button>
-        </div>
+        <AppSectionNav />
       </div>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       {info ? <p className="text-sm text-emerald-600">{info}</p> : null}

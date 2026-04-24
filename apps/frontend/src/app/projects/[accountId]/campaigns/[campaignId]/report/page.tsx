@@ -4,13 +4,14 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
-import { SiteHelpLink } from "@/components/site-help-link";
+import { AppSectionNav } from "@/components/app-section-nav";
 import { Button } from "@/components/ui/button";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { getAccessToken } from "@/lib/auth";
 import { ruleTitleRu } from "@/lib/rule-titles-ru";
 
 import {
+  AiVerdictPanel,
   buildGroupedCampaignRows,
   GroupedDetailsSection,
   recommendationText,
@@ -65,6 +66,7 @@ const EVIDENCE_LABEL_RU: Record<string, string> = {
   missing_utm_params: "Нет UTM",
   utm_validation_errors: "Ошибки UTM",
   redirect_chain: "Цепочка редиректов",
+  redirect_chain_flow_ru: "Переходы (кто куда ведёт)",
   broken_sitelinks: "Битые быстрые ссылки",
   broken_sitelink_urls: "Битые быстрые ссылки (URL)",
   main_url: "Основной URL",
@@ -91,6 +93,26 @@ const EVIDENCE_LABEL_RU: Record<string, string> = {
   left_group_id: "Группа А",
   right_group_id: "Группа Б",
   semantic_overlap_examples: "Примеры пересечений",
+  display_url_full: "Полный URL",
+  url_query_highlight_segments: "Query-строка (проблема)",
+  url_highlight_segments: "URL (плейсхолдер)",
+  full_url_highlight_segments: "URL (синтаксис)",
+  text_highlight_segments: "Текст (ошибка)",
+  ad_text_for_audit: "Текст объявления",
+  issue_explanation_ru: "Пояснение",
+  audit_reference_today: "Дата проверки (ISO)",
+  audit_reference_today_ru: "Сегодня по аудиту",
+  text_geo_surfaces: "Город в тексте (как написано)",
+  cross_minus_phrase_examples: "Примеры пересечений (кросс-минус)",
+  pattern_sample_urls: "Примеры URL по шаблонам UTM",
+  campaigns_with_mixed_patterns: "Кампании с разной UTM",
+  conflict_detail_ru: "В чём конфликт гео",
+  campaign_targeting_summary_ru: "Геотаргетинг кампании (сводка)",
+  mentioned_city_label_ru: "Город в тексте (нормализовано)",
+  campaign_geo_labels: "Метки гео кампании",
+  scope: "Область",
+  main_url_display: "Основная ссылка (отображение)",
+  sitelink_urls_mismatched: "Быстрые ссылки (другой домен)",
 };
 
 function evidenceLabel(key: string): string {
@@ -118,15 +140,46 @@ function SegmentList({ segments }: { segments: Array<{ text?: string; ok?: boole
   );
 }
 
+const EVIDENCE_SEGMENT_KEYS = new Set([
+  "url_value_segments",
+  "query_highlight_segments",
+  "url_query_highlight_segments",
+  "url_highlight_segments",
+  "full_url_highlight_segments",
+  "text_highlight_segments",
+]);
+
 function formatEvidenceValue(key: string, v: unknown): React.ReactNode {
   if (v === null || v === undefined) return "—";
   if (
-    (key === "url_value_segments" || key === "query_highlight_segments") &&
+    EVIDENCE_SEGMENT_KEYS.has(key) &&
     Array.isArray(v) &&
     v.length > 0 &&
     typeof v[0] === "object"
   ) {
     return <SegmentList segments={v as Array<{ text?: string; ok?: boolean }>} />;
+  }
+  if (
+    (key === "issue_explanation_ru" ||
+      key === "conflict_detail_ru" ||
+      key === "redirect_chain_flow_ru") &&
+    typeof v === "string"
+  ) {
+    return (
+      <p className="mt-1 break-all text-sm text-foreground/95 sm:break-words">{v}</p>
+    );
+  }
+  if (key === "cross_minus_phrase_examples" && Array.isArray(v)) {
+    return (
+      <ul className="mt-1 list-inside list-disc space-y-1 text-[11px]">
+        {(v as Record<string, unknown>[]).map((row, i) => (
+          <li key={i}>
+            <span className="text-muted-foreground">{String(row.label ?? "пример")}: </span>
+            «{String(row.phrase ?? "")}» — токен <span className="text-destructive">{String(row.shared_token ?? "")}</span>
+          </li>
+        ))}
+      </ul>
+    );
   }
   if (key === "sitelink_urls" && Array.isArray(v)) {
     return (
@@ -237,17 +290,20 @@ function EvidenceBlock({ row }: { row: Finding }) {
     );
   }
   return (
-    <dl className="space-y-2 text-xs">
-      {Object.entries(ev).map(([k, v]) => {
-        if (v === null || v === undefined || v === "") return null;
-        return (
-          <div key={k}>
-            <dt className="font-medium text-foreground">{evidenceLabel(k)}</dt>
-            <dd className="text-muted-foreground">{formatEvidenceValue(k, v)}</dd>
-          </div>
-        );
-      })}
-    </dl>
+    <>
+      <dl className="space-y-2 text-xs">
+        {Object.entries(ev).map(([k, v]) => {
+          if (v === null || v === undefined || v === "") return null;
+          return (
+            <div key={k}>
+              <dt className="font-medium text-foreground">{evidenceLabel(k)}</dt>
+              <dd className="text-muted-foreground">{formatEvidenceValue(k, v)}</dd>
+            </div>
+          );
+        })}
+      </dl>
+      <AiVerdictPanel rows={[row]} />
+    </>
   );
 }
 
@@ -415,7 +471,7 @@ export default function CampaignReportPage() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 px-6 py-10">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="mb-1 text-xs text-muted-foreground">
             <Link href="/dashboard" className="hover:underline">
@@ -430,14 +486,15 @@ export default function CampaignReportPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Отчет кампании: {campaignName ?? campaignId}</h1>
           <p className="text-sm text-muted-foreground">ID кампании: {campaignId}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <SiteHelpLink />
-          <span className={auditRunning || auditTaskId ? "audit-play-running inline-flex rounded-md" : "inline-flex"}>
-            <Button onClick={() => void runCampaignAudit()} disabled={auditRunning || !!auditTaskId}>
-              ▶ Запустить аудит
-            </Button>
-          </span>
-        </div>
+        <AppSectionNav
+          trailing={
+            <span className={auditRunning || auditTaskId ? "audit-play-running inline-flex rounded-md" : "inline-flex"}>
+              <Button onClick={() => void runCampaignAudit()} disabled={auditRunning || !!auditTaskId}>
+                ▶ Запустить аудит
+              </Button>
+            </span>
+          }
+        />
       </div>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       {info ? <p className="text-sm text-emerald-600">{info}</p> : null}
@@ -475,6 +532,7 @@ export default function CampaignReportPage() {
               const groupedLayout = rowUsesGroupedLayout(row);
               const loc = [
                 row.campaign_external_id ? `камп. ${row.campaign_external_id}` : null,
+                !row.campaign_external_id && row.issue_location?.startsWith("account:") ? row.issue_location : null,
                 row.group_external_id ? `гр. ${row.group_external_id}` : null,
                 row.ad_external_id ? `объявл. ${row.ad_external_id}` : null,
               ]
@@ -492,7 +550,9 @@ export default function CampaignReportPage() {
                           <span className={row.status === "existing" ? "text-xs font-semibold text-red-600" : "text-xs text-muted-foreground"}>
                             {statusRu(row.status)}
                           </span>
-                          {loc && !groupedLayout ? <span className="text-xs text-blue-800">Объекты: {loc}</span> : null}
+                          {loc && !groupedLayout && row.rule_code !== RULE_ACTIVE_CAMPAIGN_WITHOUT_ACTIVE_GROUPS ? (
+                            <span className="text-xs text-blue-800">Объекты: {loc}</span>
+                          ) : null}
                           <span className="ml-auto text-xs text-muted-foreground">
                             {new Date(row.created_at).toLocaleString("ru-RU")}
                           </span>

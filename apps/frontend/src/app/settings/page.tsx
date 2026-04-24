@@ -1,12 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-import { SiteHelpLink } from "@/components/site-help-link";
+import { AppSectionNav } from "@/components/app-section-nav";
 import { Button } from "@/components/ui/button";
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api-client";
-import { clearSession, getAccessToken } from "@/lib/auth";
+import { getAccessToken } from "@/lib/auth";
 import { RECOMMENDED_AI_PROMPT_PREFIX } from "@/lib/recommended-ai-prompt";
 
 type Me = {
@@ -110,12 +109,6 @@ export default function SettingsPage() {
       setInfo(login ? `Кабинет ${login} подключен через OAuth.` : "Кабинет подключен через OAuth.");
     }
   }, []);
-
-  function logout() {
-    clearSession();
-    const prefix = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/$/, "");
-    window.location.href = `${prefix}/login`;
-  }
 
   async function createUser(e: FormEvent) {
     e.preventDefault();
@@ -252,18 +245,7 @@ export default function SettingsPage() {
             </p>
           ) : null}
         </div>
-        <div className="flex items-center gap-2">
-          <SiteHelpLink />
-          <Button variant="secondary" asChild>
-            <Link href="/handoff">Handoff</Link>
-          </Button>
-          <Button variant="secondary" asChild>
-            <Link href="/dashboard">Главная</Link>
-          </Button>
-          <Button variant="outline" type="button" onClick={logout}>
-            Выйти
-          </Button>
-        </div>
+        <AppSectionNav current="settings" />
       </div>
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}

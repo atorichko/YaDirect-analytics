@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 
-import { Button } from "@/components/ui/button";
+import { AppSectionNav } from "@/components/app-section-nav";
 import catalog from "@/data/rule-catalog.json";
 
 export const metadata: Metadata = {
@@ -89,11 +89,7 @@ export default function HelpPage() {
             «Настройки».
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" asChild>
-            <Link href="/dashboard">Главная</Link>
-          </Button>
-        </div>
+        <AppSectionNav current="help" />
       </div>
 
       <section className="rounded-lg border bg-card p-5 shadow-sm">
