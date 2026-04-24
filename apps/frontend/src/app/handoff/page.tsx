@@ -221,6 +221,84 @@ export default function HandoffPage() {
           <strong>заново загрузить каталог и активировать</strong> его. Иначе новые проверки в коде/JSON{" "}
           <strong>не начнут применяться</strong> в соответствии с обновлённым каталогом в БД.
         </p>
+
+        <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+          <h3 className="text-base font-semibold text-foreground">Как обновить каталог на проде (API, админ)</h3>
+          <p className="text-muted-foreground">
+            Публичный префикс API на этом стенде:{" "}
+            <code className="rounded bg-muted px-1 break-all">
+              https://atorichko.asur-adigital.ru/YaDirect-analytics/api/v1
+            </code>
+            . OpenAPI:{" "}
+            <a
+              href="https://atorichko.asur-adigital.ru/YaDirect-analytics/api/v1/docs"
+              className="text-primary underline-offset-4 hover:underline break-all"
+              target="_blank"
+              rel="noreferrer"
+            >
+              …/api/v1/docs
+            </a>
+            . Эндпоинты:{" "}
+            <code className="rounded bg-muted px-1">POST /rule-catalogs</code> (загрузка) и{" "}
+            <code className="rounded bg-muted px-1">POST /rule-catalogs/{"{id}"}/activate</code> (активация). Текущий
+            активный каталог: <code className="rounded bg-muted px-1">GET /rule-catalogs/active</code>.
+          </p>
+          <p className="text-muted-foreground">
+            Тело <code className="rounded bg-muted px-1">POST /rule-catalogs</code> в коде — схема{" "}
+            <code className="rounded bg-muted px-1">CatalogUploadRequest</code> (поля{" "}
+            <code className="rounded bg-muted px-1">rule_name</code>,{" "}
+            <code className="rounded bg-muted px-1">check_type</code> и т.д.). Файл в git —{" "}
+            <code className="rounded bg-muted px-1">rule-catalog.json</code> в другом виде (
+            <code className="rounded bg-muted px-1">name_ru</code> и пр.). Чтобы не собирать JSON вручную, используйте
+            скрипт из репозитория:{" "}
+            <code className="rounded bg-muted px-1">apps/backend/scripts/upload_rule_catalog_api.py</code> — он читает{" "}
+            <code className="rounded bg-muted px-1">apps/frontend/src/data/rule-catalog.json</code>, маппит правила в
+            формат API и выставляет <code className="rounded bg-muted px-1">check_type</code> (deterministic / ai_assisted)
+            по реестрам L1/L2/L3.
+          </p>
+          <p className="font-medium text-foreground">Порядок действий (с VDS или любой машины с доступом в git и HTTPS до прода)</p>
+          <ol className="list-inside list-decimal space-y-2 text-muted-foreground">
+            <li>
+              Получить access-токен админа: <code className="rounded bg-muted px-1">POST …/auth/login</code> с телом{" "}
+              <code className="rounded bg-muted px-1">{"{ \"email\", \"password\" }"}</code>. Учётные данные того же
+              bootstrap-админа задаются в корневом <code className="rounded bg-muted px-1">.env</code>:{" "}
+              <code className="rounded bg-muted px-1">SEED_ADMIN_EMAIL</code>,{" "}
+              <code className="rounded bg-muted px-1">SEED_ADMIN_PASSWORD</code> (см.{" "}
+              <code className="rounded bg-muted px-1">scripts/seed_admin.py</code>). Пароль в документацию и в чат не
+              копировать.
+            </li>
+            <li>
+              В каталоге <code className="rounded bg-muted px-1">apps/backend</code> выставить переменные и запустить
+              скрипт:
+              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded bg-background p-3 font-mono text-[0.75rem] leading-normal md:text-[0.8rem]">
+                {`export API_BASE_URL="https://atorichko.asur-adigital.ru/YaDirect-analytics/api/v1"
+export ADMIN_ACCESS_TOKEN="<access_token из ответа login>"
+python3 scripts/upload_rule_catalog_api.py`}
+              </pre>
+            </li>
+            <li>
+              Если ответ загрузки <strong>409</strong> и текст вроде «Catalog version already exists for platform» —
+              версия <code className="rounded bg-muted px-1">catalog_version</code> уже занята в БД. Повторить с новой
+              версией (семвер выше текущей активной, смотреть в{" "}
+              <code className="rounded bg-muted px-1">GET /rule-catalogs/active</code>):
+              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded bg-background p-3 font-mono text-[0.75rem] leading-normal md:text-[0.8rem]">
+                {`python3 scripts/upload_rule_catalog_api.py --catalog-version 1.0.2`}
+              </pre>
+              Скрипт сам вызовет <code className="rounded bg-muted px-1">activate</code> для загруженного id.
+            </li>
+            <li>
+              Проверка без записи в БД:{" "}
+              <code className="rounded bg-muted px-1">python3 scripts/upload_rule_catalog_api.py --dry-run</code> (печать
+              JSON тела).
+            </li>
+            <li>
+              После успешной заливки имеет смысл обновить в git поле{" "}
+              <code className="rounded bg-muted px-1">catalog_version</code> в{" "}
+              <code className="rounded bg-muted px-1">apps/frontend/src/data/rule-catalog.json</code> на ту же строку,
+              что ушла на прод — чтобы локальный файл и БД не расходились по номеру версии.
+            </li>
+          </ol>
+        </div>
         <p className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-emerald-950 dark:text-emerald-100">
           <strong>Актуальные нюансы lifecycle:</strong> deterministic-проверки (L1/L2/L3) имеют приоритет над AI. AI
           не может закрыть ошибку, если по тому же <code className="rounded bg-muted px-1">rule_code + entity_key</code>{" "}
@@ -306,10 +384,16 @@ docker compose ps`}
           </div>
           <div>
             <p className="mb-2 font-sans text-sm font-medium text-foreground">7. Каталог правил после обновления кода</p>
+            <p className="mb-2 font-sans text-xs text-muted-foreground">
+              Подробный сценарий (URL прода, login, скрипт, 409 и версия) — в разделе{" "}
+              <strong>«Как обновить каталог на проде (API, админ)»</strong> выше на этой странице.
+            </p>
             <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-background p-3 text-[0.8rem] leading-normal">
-{`# Через API под админом: загрузить JSON каталога, затем activate.
-# См. POST /api/v1/rule-catalogs и POST .../activate в OpenAPI:
-# /YaDirect-analytics/api/v1/docs`}
+{`cd /root/YaDirect-analytics/apps/backend
+export API_BASE_URL="https://atorichko.asur-adigital.ru/YaDirect-analytics/api/v1"
+export ADMIN_ACCESS_TOKEN="<после POST .../auth/login>"
+python3 scripts/upload_rule_catalog_api.py
+# при 409: python3 scripts/upload_rule_catalog_api.py --catalog-version <новая>`}
             </pre>
           </div>
         </div>
