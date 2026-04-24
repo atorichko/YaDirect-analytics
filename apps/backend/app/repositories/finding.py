@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.finding import FindingLevel
@@ -56,7 +56,12 @@ class FindingRepository:
         if account_id is not None:
             stmt = stmt.where(Finding.account_id == account_id)
         if campaign_external_id:
-            stmt = stmt.where(Finding.campaign_external_id == campaign_external_id)
+            stmt = stmt.where(
+                or_(
+                    Finding.campaign_external_id == campaign_external_id,
+                    Finding.evidence["scope"].astext == "account",
+                )
+            )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 

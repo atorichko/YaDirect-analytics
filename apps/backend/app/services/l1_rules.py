@@ -182,6 +182,91 @@ def _negative_tokens(items: Any) -> set[str]:
     return out
 
 
+def _combined_negatives_campaign_group(
+    campaign: dict[str, Any] | None,
+    group: dict[str, Any] | None,
+) -> set[str]:
+    n: set[str] = set()
+    if campaign is not None:
+        n |= _negative_tokens(campaign.get("negative_keywords"))
+    if group is not None:
+        n |= _negative_tokens(group.get("negative_keywords"))
+    return n
+
+
+def _keyword_overlap_excluded_by_negatives(
+    left_tokens: set[str],
+    right_tokens: set[str],
+    neg_for_left: set[str],
+    neg_for_right: set[str],
+) -> bool:
+    """
+    Пересечение спроса между двумя фразами считается снятым, если «хвост» одной фразы
+    перекрыт минус-словами кампании/группы другой стороны (классический кросс-минус).
+    """
+    only_l = left_tokens - right_tokens
+    only_r = right_tokens - left_tokens
+    if only_r and only_r <= neg_for_left:
+        return True
+    if only_l and only_l <= neg_for_right:
+        return True
+    return False
+
+
+def _first_ad_id_for_group(ctx: L1Context, group_id: str) -> str | None:
+    for ad in ctx.ads:
+        if str(ad.get("ad_group_id")) != str(group_id):
+            continue
+        if _is_structurally_enabled_yandex_ad(ad):
+            return str(ad.get("id")) if ad.get("id") is not None else None
+    return None
+
+
+def _text_year_highlight_segments(text: str, *, current_year: int) -> list[dict[str, Any]]:
+    """Подсветка упоминаний прошлых лет в тексте (ok=false)."""
+    segments: list[dict[str, Any]] = []
+    cursor = 0
+    for m in _YEAR_RE.finditer(text):
+        y = int(m.group(1))
+        if y >= current_year:
+            continue
+        if m.start() > cursor:
+            segments.append({"text": text[cursor : m.start()], "ok": True})
+        segments.append({"text": m.group(0), "ok": False})
+        cursor = m.end()
+    if cursor < len(text):
+        segments.append({"text": text[cursor:], "ok": True})
+    return segments
+
+
+def _text_placeholder_highlight_segments(text: str, placeholders: list[str]) -> list[dict[str, Any]]:
+    if not placeholders:
+        return [{"text": text, "ok": True}]
+    bad = sorted(set(placeholders), key=len, reverse=True)
+    segments: list[dict[str, Any]] = []
+    cursor = 0
+    n = len(text)
+    while cursor < n:
+        earliest: tuple[int, int, str] | None = None
+        for ph in bad:
+            pos = text.find(ph, cursor)
+            if pos < 0:
+                continue
+            end = pos + len(ph)
+            cand = (pos, end, ph)
+            if earliest is None or pos < earliest[0]:
+                earliest = cand
+        if earliest is None:
+            segments.append({"text": text[cursor:], "ok": True})
+            break
+        pos, end, ph = earliest
+        if pos > cursor:
+            segments.append({"text": text[cursor:pos], "ok": True})
+        segments.append({"text": ph, "ok": False})
+        cursor = end
+    return segments
+
+
 def _geo_setting_tokens(geo_list: Any) -> set[str]:
     """Normalized tokens from campaign geo settings (names, region labels in snapshots)."""
     if not isinstance(geo_list, list):
@@ -653,6 +738,8 @@ def _unresolved_placeholder_in_text(ctx: L1Context, rule: dict[str, Any]) -> lis
                     "campaign_id": ad.get("campaign_id"),
                     "group_id": ad.get("ad_group_id"),
                     "ad_id": ad.get("id"),
+                    "ad_text_for_audit": joined.strip(),
+                    "text_highlight_segments": _text_placeholder_highlight_segments(joined, matched),
                     "matched_placeholder": matched[0] if len(matched) == 1 else matched,
                     "matched_placeholders": matched,
                 },
@@ -791,20 +878,24 @@ def _keyword_conflicts_with_group_negatives(ctx: L1Context, rule: dict[str, Any]
         conflicts = sorted(_keyword_positive_tokens(phrase) & negatives)
         if not conflicts:
             continue
+        sample_ad = _first_ad_id_for_group(ctx, group_id)
         out.append(
             FindingDraft(
                 entity_key=f"keyword:{keyword.get('id')}:group_negative_conflict",
                 issue_location=f"group:{group_id}",
                 campaign_external_id=str(keyword.get("campaign_id")),
                 group_external_id=group_id,
-                ad_external_id=None,
+                ad_external_id=sample_ad,
                 evidence={
                     "campaign_id": keyword.get("campaign_id"),
                     "group_id": group_id,
                     "keyword_id": keyword.get("id"),
                     "keyword_text": phrase,
+                    "keyword_phrase": phrase,
                     "conflict_tokens": conflicts,
                     "conflicting_negative": conflicts[0] if conflicts else None,
+                    "conflicting_minus_word": conflicts[0] if conflicts else None,
+                    "sample_ad_id": sample_ad,
                 },
                 impact_ru="Ключевая фраза конфликтует с минус-словами группы и теряет показы.",
                 recommendation_ru=rule.get("recommendation_ru", "Согласовать ключ и минус-слова в группе."),
@@ -830,20 +921,25 @@ def _keyword_conflicts_with_campaign_negatives(ctx: L1Context, rule: dict[str, A
         conflicts = sorted(_keyword_positive_tokens(phrase) & negatives)
         if not conflicts:
             continue
+        gid_kw = str(keyword.get("ad_group_id"))
+        sample_ad = _first_ad_id_for_group(ctx, gid_kw)
         out.append(
             FindingDraft(
                 entity_key=f"keyword:{keyword.get('id')}:campaign_negative_conflict",
                 issue_location=f"campaign:{campaign_id}",
                 campaign_external_id=campaign_id,
-                group_external_id=str(keyword.get("ad_group_id")),
-                ad_external_id=None,
+                group_external_id=gid_kw,
+                ad_external_id=sample_ad,
                 evidence={
                     "campaign_id": campaign_id,
                     "group_id": keyword.get("ad_group_id"),
                     "keyword_id": keyword.get("id"),
                     "keyword_text": phrase,
+                    "keyword_phrase": phrase,
                     "conflict_tokens": conflicts,
                     "conflicting_negative": conflicts[0] if conflicts else None,
+                    "conflicting_minus_word": conflicts[0] if conflicts else None,
+                    "sample_ad_id": sample_ad,
                 },
                 impact_ru="Ключевая фраза конфликтует с минус-словами кампании и не получает целевой трафик.",
                 recommendation_ru=rule.get("recommendation_ru", "Проверить кросс-минусовку на уровне кампании."),
@@ -961,6 +1057,7 @@ def _group_all_ads_rejected(ctx: L1Context, rule: dict[str, Any]) -> list[Findin
 def _expired_date_in_ad_text(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
     now = datetime.now(timezone.utc).date()
     current_year = now.year
+    today_ru = now.isoformat()
     out: list[FindingDraft] = []
     for ad in ctx.ads:
         if not _is_structurally_enabled_yandex_ad(ad):
@@ -986,6 +1083,8 @@ def _expired_date_in_ad_text(ctx: L1Context, rule: dict[str, Any]) -> list[Findi
                         "expired_date": match.group(0),
                         "matched_date_text": match.group(0),
                         "parsed_date": value.isoformat(),
+                        "audit_reference_today": today_ru,
+                        "audit_reference_today_ru": f"сегодня (дата аудита): {today_ru}",
                     },
                     impact_ru="В тексте объявления указана прошедшая дата, оффер выглядит неактуальным.",
                     recommendation_ru=rule.get("recommendation_ru", "Обновить дату в тексте объявления."),
@@ -1007,6 +1106,8 @@ def _expired_date_in_ad_text(ctx: L1Context, rule: dict[str, Any]) -> list[Findi
                         "ad_id": ad.get("id"),
                         "matched_date_text": snippet,
                         "parsed_date": str(y),
+                        "audit_reference_today": today_ru,
+                        "audit_reference_today_ru": f"сегодня (дата аудита): {today_ru}",
                     },
                     impact_ru="В тексте объявления указана прошедшая дата, оффер выглядит неактуальным.",
                     recommendation_ru=rule.get("recommendation_ru", "Обновить дату в тексте объявления."),
@@ -1017,6 +1118,7 @@ def _expired_date_in_ad_text(ctx: L1Context, rule: dict[str, Any]) -> list[Findi
 
 def _expired_date_in_extensions(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
     now = datetime.now(timezone.utc).date()
+    today_ru = now.isoformat()
     out: list[FindingDraft] = []
     for ext in ctx.extensions:
         ad_id = ext.get("ad_id")
@@ -1043,6 +1145,8 @@ def _expired_date_in_extensions(ctx: L1Context, rule: dict[str, Any]) -> list[Fi
                         "extension_type": "sitelink",
                         "matched_date_text": match.group(0),
                         "parsed_date": value.isoformat(),
+                        "audit_reference_today": today_ru,
+                        "audit_reference_today_ru": f"сегодня (дата аудита): {today_ru}",
                         "sitelink_index": idx,
                         "sitelink_title": sl.get("title"),
                     }
@@ -1091,6 +1195,8 @@ def _expired_date_in_extensions(ctx: L1Context, rule: dict[str, Any]) -> list[Fi
                                 "callout_text": co_text,
                                 "matched_date_text": match.group(0),
                                 "parsed_date": value.isoformat(),
+                                "audit_reference_today": today_ru,
+                                "audit_reference_today_ru": f"сегодня (дата аудита): {today_ru}",
                             },
                             impact_ru="В тексте расширения (уточнения) указана прошедшая дата.",
                             recommendation_ru=rule.get("recommendation_ru", "Обновить даты в расширениях объявления."),
@@ -1105,7 +1211,7 @@ def _past_year_in_text(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraf
     for ad in ctx.ads:
         if not _is_structurally_enabled_yandex_ad(ad):
             continue
-        text = f"{ad.get('title') or ''} {ad.get('text') or ''}"
+        text = f"{ad.get('title') or ''} {ad.get('text') or ''}".strip()
         years = sorted({int(m.group(1)) for m in _YEAR_RE.finditer(text)})
         stale = [year for year in years if year < current_year]
         if not stale:
@@ -1119,6 +1225,8 @@ def _past_year_in_text(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraf
                 ad_external_id=str(ad.get("id")),
                 evidence={
                     "ad_id": ad.get("id"),
+                    "ad_text_for_audit": text,
+                    "text_highlight_segments": _text_year_highlight_segments(text, current_year=current_year),
                     "matched_years": stale,
                     "mentioned_years": stale,
                     "current_year": current_year,
@@ -1137,6 +1245,8 @@ def _duplicate_keywords_with_overlap(ctx: L1Context, rule: dict[str, Any]) -> li
     groups_src = _groups_for_geo_rules(ctx)
     camp_source = ctx.account_campaigns if ctx.account_campaigns is not None else ctx.campaigns
     campaigns_active = [c for c in camp_source if _is_active_yandex_campaign(c)]
+    camp_by_id = {str(c.get("id")): c for c in camp_source if c.get("id") is not None}
+    grp_by_id = {str(g.get("id")): g for g in groups_src if g.get("id") is not None}
     out: list[FindingDraft] = []
     scope = ctx.scoped_campaign_external_id
     for i in range(len(kws)):
@@ -1164,6 +1274,10 @@ def _duplicate_keywords_with_overlap(ctx: L1Context, rule: dict[str, Any]) -> li
                 continue
             overlap_ratio = len(inter) / max(1, min(len(left_tokens), len(right_tokens)))
             if overlap_ratio < 0.7:
+                continue
+            neg_left = _combined_negatives_campaign_group(camp_by_id.get(c_left), grp_by_id.get(g_left))
+            neg_right = _combined_negatives_campaign_group(camp_by_id.get(c_right), grp_by_id.get(g_right))
+            if _keyword_overlap_excluded_by_negatives(left_tokens, right_tokens, neg_left, neg_right):
                 continue
             if c_left != c_right:
                 geo_ok, _ = _campaign_pair_geo_targets_overlap(c_left, c_right, campaigns_active, groups_src)
@@ -1237,6 +1351,23 @@ def _group_keyword_overlap(ctx: L1Context, rule: dict[str, Any]) -> list[Finding
                 common = sorted(groups[left_id] & groups[right_id])
                 if not common:
                     continue
+                common_set = set(common)
+                left_phrases: list[str] = []
+                right_phrases: list[str] = []
+                for kw in ctx.keywords:
+                    if str(kw.get("campaign_id")) != campaign_id:
+                        continue
+                    ph = str(kw.get("phrase") or kw.get("text") or "")
+                    norm = _normalize_keyword(ph)
+                    if norm not in common_set:
+                        continue
+                    gid = str(kw.get("ad_group_id"))
+                    if gid == left_id:
+                        left_phrases.append(ph)
+                    elif gid == right_id:
+                        right_phrases.append(ph)
+                ln = group_meta.get(left_id, {}).get("name") or left_id
+                rn = group_meta.get(right_id, {}).get("name") or right_id
                 out.append(
                     FindingDraft(
                         entity_key=f"campaign:{campaign_id}:group_overlap:{left_id}:{right_id}",
@@ -1251,6 +1382,19 @@ def _group_keyword_overlap(ctx: L1Context, rule: dict[str, Any]) -> list[Finding
                             "right_group_id": right_id,
                             "right_group_name": group_meta.get(right_id, {}).get("name"),
                             "overlap_keywords": common,
+                            "overlap_keywords_count": len(common),
+                            "overlap_phrases_left_sample": sorted(set(left_phrases))[:12],
+                            "overlap_phrases_right_sample": sorted(set(right_phrases))[:12],
+                            "detail_summary_ru": (
+                                f"В группах «{ln}» и «{rn}» совпадают нормализованные ключи: "
+                                f"{', '.join(common[:8])}"
+                                f"{'…' if len(common) > 8 else ''}."
+                            ),
+                            "issue_explanation_ru": (
+                                f"Две группы одной кампании («{ln}» и «{rn}») участвуют в аукционе по одним и тем же "
+                                f"нормализованным ключам ({len(common)} совпадений). Такая «двойная» подача размывает "
+                                f"ставки и повышает внутреннюю конкуренцию."
+                            ),
                         },
                         impact_ru="Одинаковые ключи в разных группах одной кампании ведут к само-конкуренции.",
                         recommendation_ru=rule.get("recommendation_ru", "Развести ключи между группами или добавить минус-слова."),
@@ -1262,11 +1406,15 @@ def _group_keyword_overlap(ctx: L1Context, rule: dict[str, Any]) -> list[Finding
 def _missing_cross_negatives(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
     groups = [g for g in ctx.groups if _is_servable_ad_group(g)]
     keywords_by_group: dict[str, set[str]] = defaultdict(set)
+    phrases_by_group: dict[str, list[str]] = defaultdict(list)
     for kw in ctx.keywords:
         if not _is_servable_yandex_keyword(kw):
             continue
         group_id = str(kw.get("ad_group_id"))
-        keywords_by_group[group_id] |= _keyword_positive_tokens(str(kw.get("phrase") or kw.get("text") or ""))
+        phrase = str(kw.get("phrase") or kw.get("text") or "")
+        keywords_by_group[group_id] |= _keyword_positive_tokens(phrase)
+        if phrase.strip():
+            phrases_by_group[group_id].append(phrase.strip())
     out: list[FindingDraft] = []
     by_campaign: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for g in groups:
@@ -1291,6 +1439,21 @@ def _missing_cross_negatives(ctx: L1Context, rule: dict[str, Any]) -> list[Findi
                     missing |= other_tokens - g_negatives
             if not missing:
                 continue
+            cross_examples: list[dict[str, str]] = []
+            for other in campaign_groups:
+                other_id = str(other.get("id"))
+                if other_id == g_id:
+                    continue
+                for ph in phrases_by_group.get(other_id, []):
+                    shared = _keyword_positive_tokens(ph) & missing
+                    if not shared:
+                        continue
+                    tok = sorted(shared)[0]
+                    cross_examples.append({"label": "пример", "phrase": ph, "shared_token": tok})
+                    if len(cross_examples) >= 3:
+                        break
+                if len(cross_examples) >= 3:
+                    break
             out.append(
                 FindingDraft(
                     entity_key=f"group:{g_id}:missing_cross_negatives",
@@ -1303,6 +1466,7 @@ def _missing_cross_negatives(ctx: L1Context, rule: dict[str, Any]) -> list[Findi
                         "group_id": g_id,
                         "group_name": g.get("name"),
                         "missing_negative_tokens": sorted(missing),
+                        "cross_minus_phrase_examples": cross_examples,
                     },
                     impact_ru="Отсутствует кросс-минусовка между группами, трафик пересекается и дорожает.",
                     recommendation_ru=rule.get("recommendation_ru", "Добавить кросс-минус-слова между группами."),
@@ -1347,6 +1511,16 @@ def _campaign_self_competition_by_geo_and_semantics(ctx: L1Context, rule: dict[s
             attach_id = lo
             if scope and (scope == left_id or scope == right_id):
                 attach_id = scope
+            lname = str(left.get("name") or left_id)
+            rname = str(right.get("name") or right_id)
+            geo_labels: list[str] = []
+            for c in (left, right):
+                raw_geo = c.get("geo") or []
+                if isinstance(raw_geo, list):
+                    for item in raw_geo:
+                        s = str(item).strip()
+                        if s:
+                            geo_labels.append(s)
             out.append(
                 FindingDraft(
                     entity_key=f"campaign_overlap:{lo}:{hi}",
@@ -1357,9 +1531,18 @@ def _campaign_self_competition_by_geo_and_semantics(ctx: L1Context, rule: dict[s
                     evidence={
                         "left_campaign_id": left_id,
                         "right_campaign_id": right_id,
+                        "left_campaign_name": lname,
+                        "right_campaign_name": rname,
+                        "campaign_pair_label_ru": f"«{lname}» (ID {left_id}) и «{rname}» (ID {right_id})",
                         "geo_overlap": sorted(geo_overlap)[:30],
+                        "overlapping_geo_labels": sorted(set(geo_labels))[:20],
                         "semantic_overlap_count": len(kw_overlap),
                         "semantic_overlap_examples": sorted(list(kw_overlap))[:10],
+                        "detail_summary_ru": (
+                            f"Две активные кампании пересекаются по гео и делят одинаковую семантику "
+                            f"(пример совпадений: {', '.join(sorted(list(kw_overlap))[:5])}"
+                            f"{'…' if len(kw_overlap) > 5 else ''})."
+                        ),
                     },
                     impact_ru="Кампании пересекаются по гео и семантике, возникает само-конкуренция внутри аккаунта.",
                     recommendation_ru=rule.get("recommendation_ru", "Развести гео/семантику между кампаниями."),
@@ -1374,12 +1557,78 @@ _GEO_TEXT_YANDEX_REGION_ID_TO_CITY: dict[int, str] = {
     2: "санкт-петербург",
 }
 
+_GEO_CANONICAL_CITY_LABEL_RU: dict[str, str] = {
+    "москва": "Москва",
+    "санкт-петербург": "Санкт-Петербург",
+}
+
+
+def _campaign_geo_targeting_summary_ru(campaign: dict[str, Any], fp: set[str]) -> tuple[list[str], str]:
+    """Подписи геотаргетинга кампании для отчёта (как в снимке: регионы из geo + rid/метки)."""
+    parts: list[str] = []
+    raw_geo = campaign.get("geo") or []
+    if isinstance(raw_geo, list):
+        for x in raw_geo:
+            s = str(x).strip()
+            if s:
+                parts.append(s)
+    seen_lower = {p.lower() for p in parts}
+    if GEO_FINGERPRINT_ALL_REGIONS in fp:
+        parts.append("все регионы (Россия)")
+    for x in sorted(fp):
+        if x.startswith("label:"):
+            lab = x.replace("label:", "", 1).strip()
+            if lab and lab.lower() not in seen_lower:
+                parts.append(lab)
+                seen_lower.add(lab.lower())
+        elif x.startswith("rid:") and x != GEO_FINGERPRINT_ALL_REGIONS:
+            rid_part = x.split(":", 1)[-1]
+            if not rid_part.isdigit():
+                continue
+            canonical = _GEO_TEXT_YANDEX_REGION_ID_TO_CITY.get(int(rid_part))
+            if canonical:
+                label = _GEO_CANONICAL_CITY_LABEL_RU.get(canonical, canonical.title())
+                hint = f"{label} (регион Яндекса id {rid_part})"
+                if hint.lower() not in seen_lower:
+                    parts.append(hint)
+                    seen_lower.add(hint.lower())
+            else:
+                hint = f"регион id {rid_part}"
+                if hint.lower() not in seen_lower:
+                    parts.append(hint)
+                    seen_lower.add(hint.lower())
+    summary = (
+        ", ".join(parts)
+        if parts
+        else "в снимке нет явного совпадения с городом из текста объявления (проверьте регионы в Директе)"
+    )
+    return parts, summary
+
 
 def _geo_text_targeting_mismatch(ctx: L1Context, rule: dict[str, Any]) -> list[FindingDraft]:
-    # Minimal deterministic detector for current test fixture.
+    # Детектор несоответствия гео в тексте и таргетинга (склонения и разговорные формы).
     city_aliases = {
-        "москва": {"москва", "москов"},
-        "санкт-петербург": {"санкт-петербург", "санкт петербург", "спб", "питер"},
+        "москва": {
+            "москва",
+            "москов",
+            "москве",
+            "москвой",
+            "москвы",
+            "москву",
+            "московская",
+            "московский",
+            "московские",
+            "московскую",
+        },
+        "санкт-петербург": {
+            "санкт-петербург",
+            "санктпетербург",
+            "санкт петербург",
+            "спб",
+            "питер",
+            "петербург",
+            "ленинград",
+        },
     }
     campaigns = {str(c.get("id")): c for c in ctx.campaigns}
     groups_src = _groups_for_geo_rules(ctx)
@@ -1412,11 +1661,32 @@ def _geo_text_targeting_mismatch(ctx: L1Context, rule: dict[str, Any]) -> list[F
                     aliases = city_aliases.get(canonical)
                     if aliases:
                         campaign_geo_text += " " + " ".join(sorted(aliases))
-        ad_text = f"{str(ad.get('title') or '').lower()} {str(ad.get('text') or '').lower()}"
+        title_raw = str(ad.get("title") or "")
+        text_raw = str(ad.get("text") or "")
+        ad_text = f"{title_raw.lower()} {text_raw.lower()}"
         for canonical, aliases in city_aliases.items():
             mentions_city = any(alias in ad_text for alias in aliases)
             campaign_has_city = any(alias in campaign_geo_text for alias in aliases)
             if mentions_city and not campaign_has_city:
+                mentioned_surfaces: list[str] = []
+                combined_raw = f"{title_raw} {text_raw}".strip()
+                low_combined = combined_raw.lower()
+                for alias in sorted(aliases, key=len, reverse=True):
+                    pos = low_combined.find(alias)
+                    if pos >= 0:
+                        mentioned_surfaces.append(combined_raw[pos : pos + len(alias)])
+                geo_labels, geo_summary_ru = _campaign_geo_targeting_summary_ru(campaign, fp)
+                mentioned_label_ru = _GEO_CANONICAL_CITY_LABEL_RU.get(canonical, canonical.replace("-", " ").title())
+                uniq_surfaces = sorted(set(mentioned_surfaces))[:8]
+                if uniq_surfaces:
+                    frag_ru = "«" + "», «".join(uniq_surfaces) + "»"
+                else:
+                    frag_ru = f"«{(combined_raw or title_raw)[:220].strip()}»"
+                conflict_detail_ru = (
+                    f"В тексте объявления фигурирует {mentioned_label_ru} (как написано: {frag_ru}), "
+                    f"а геотаргетинг кампании настроен на: {geo_summary_ru}. "
+                    f"Пользователь видит в креативе один город/регион, а показы ограничены другим гео."
+                )
                 out.append(
                     FindingDraft(
                         entity_key=f"ad:{ad.get('id')}:geo_mismatch:{canonical}",
@@ -1428,7 +1698,14 @@ def _geo_text_targeting_mismatch(ctx: L1Context, rule: dict[str, Any]) -> list[F
                             "campaign_id": campaign_id,
                             "ad_id": ad.get("id"),
                             "mentioned_city": canonical,
+                            "mentioned_city_label_ru": mentioned_label_ru,
+                            "text_geo_surfaces": sorted(set(mentioned_surfaces))[:6],
+                            "ad_title": title_raw,
+                            "ad_text": text_raw,
                             "campaign_geo": campaign.get("geo") or [],
+                            "campaign_geo_labels": geo_labels,
+                            "campaign_targeting_summary_ru": geo_summary_ru,
+                            "conflict_detail_ru": conflict_detail_ru,
                         },
                         impact_ru="В тексте объявления указан город, который не соответствует геотаргетингу кампании.",
                         recommendation_ru=rule.get("recommendation_ru", "Согласовать гео в тексте объявления и таргетинге."),

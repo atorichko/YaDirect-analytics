@@ -1,6 +1,6 @@
 {
   "fixture_id": "yandex_direct_audit_test_account",
-  "catalog_version": "1.0.0",
+  "catalog_version": "1.0.3",
   "expected_run_mode": "first_audit_run",
   "assumptions": [
     "Все findings в первом прогоне имеют статус new.",
@@ -1435,6 +1435,42 @@
       "evidence_contains": {
         "invalid_params": ["utm_campaign", "price"]
       }
+    },
+    {
+      "finding_key": "A31011_GEO_TEXT_TARGETING_MISMATCH",
+      "rule_code": "GEO_TEXT_TARGETING_MISMATCH",
+      "level": "L1",
+      "severity": "high",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "ad",
+      "refs": {
+        "account_id": "acc_001",
+        "campaign_id": "C310",
+        "group_id": "G3101",
+        "ad_id": "A31011"
+      },
+      "evidence_contains": {
+        "campaign_id": "C310",
+        "ad_id": "A31011",
+        "mentioned_city": "москва"
+      }
+    },
+    {
+      "finding_key": "ACC001_INCONSISTENT_UTM_PATTERN_ACCOUNT",
+      "rule_code": "INCONSISTENT_UTM_PATTERN",
+      "level": "L3",
+      "severity": "warning",
+      "source": "deterministic",
+      "status": "new",
+      "entity_type": "account",
+      "refs": {
+        "account_id": "acc_001"
+      },
+      "evidence_contains": {
+        "scope": "account",
+        "campaigns_with_mixed_patterns": ["C200", "C300", "C500"]
+      }
     }
   ],
   "heuristic_findings": [
@@ -1582,8 +1618,8 @@
     }
   ],
   "summary": {
-    "exact_findings_count": 73,
+    "exact_findings_count": 75,
     "heuristic_findings_count": 7,
-    "total_expected_findings_count": 80
+    "total_expected_findings_count": 82
   }
 }

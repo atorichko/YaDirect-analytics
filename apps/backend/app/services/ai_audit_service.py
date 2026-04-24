@@ -20,7 +20,7 @@ from app.repositories.entity_snapshot import EntitySnapshotRepository
 from app.repositories.finding import FindingRepository
 from app.repositories.rule_catalog import RuleCatalogRepository
 from app.schemas.audit import RunAIAuditResponse
-from app.core.ai_prompt_defaults import DEFAULT_AI_ANALYSIS_PROMPT_PREFIX
+from app.core.ai_prompt_defaults import AI_RULE_APPENDIX_RU, DEFAULT_AI_ANALYSIS_PROMPT_PREFIX
 from app.services.fingerprint_utils import evidence_signature
 from app.services.finding_history_service import FindingHistoryService
 
@@ -33,6 +33,14 @@ class AIAuditService:
     PROMPT_SETTING_KEY = "ai_analysis_prompt"
     DEFAULT_PROMPT_PREFIX = DEFAULT_AI_ANALYSIS_PROMPT_PREFIX
     _OPEN_STATUSES = {FindingStatus.new, FindingStatus.existing, FindingStatus.reopened}
+    _ACCOUNT_WIDE_AI_RULES = frozenset(
+        {
+            "CAMPAIGN_SELF_COMPETITION_BY_GEO_AND_SEMANTICS",
+            "GROUP_KEYWORD_OVERLAP",
+            "GEO_TEXT_TARGETING_MISMATCH",
+            "INCONSISTENT_UTM_PATTERN",
+        }
+    )
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -82,7 +90,22 @@ class AIAuditService:
             )
             prompt_prefix = await self._get_prompt_prefix()
             for rule in ai_rules:
-                for entity in entities:
+                rule_entities = entities
+                if rule.rule_code in self._ACCOUNT_WIDE_AI_RULES:
+                    bundle = await self._build_account_context_bundle(
+                        account_id=account_id,
+                        campaign_external_id=None,
+                    )
+                    rule_entities = [
+                        {
+                            "entity_key": f"account:{account_id}",
+                            "campaign_external_id": None,
+                            "group_external_id": None,
+                            "ad_external_id": None,
+                            "payload": bundle,
+                        }
+                    ]
+                for entity in rule_entities:
                     ai_calls_total += 1
                     prompt = self._build_prompt(
                         prompt_prefix=prompt_prefix,
@@ -186,6 +209,39 @@ class AIAuditService:
             finished_at=audit.finished_at,
         )
 
+    async def _build_account_context_bundle(
+        self,
+        *,
+        account_id: UUID,
+        campaign_external_id: str | None = None,
+    ) -> dict:
+        """Сжатый снимок аккаунта для AI-правил уровня кампаний/семантики/UTM."""
+        campaigns = self._latest_snapshots_as_dicts(
+            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.campaign)
+        )
+        groups = self._latest_snapshots_as_dicts(
+            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad_group)
+        )
+        keywords = self._latest_snapshots_as_dicts(
+            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.keyword)
+        )
+        ads = self._latest_snapshots_as_dicts(
+            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad)
+        )
+        if campaign_external_id:
+            cid = str(campaign_external_id)
+            campaigns = [c for c in campaigns if str(c.get("id")) == cid]
+            groups = [g for g in groups if str(g.get("campaign_id")) == cid]
+            keywords = [k for k in keywords if str(k.get("campaign_id")) == cid]
+            ads = [a for a in ads if str(a.get("campaign_id")) == cid]
+        return {
+            "account_id": str(account_id),
+            "campaigns": campaigns[:80],
+            "ad_groups": groups[:200],
+            "keywords": keywords[:500],
+            "ads": ads[:120],
+        }
+
     async def _load_candidate_entities(
         self,
         *,
@@ -232,8 +288,11 @@ class AIAuditService:
             "recommendation_ru": "string",
             "reasoning_short_ru": "string",
         }
+        appendix = AI_RULE_APPENDIX_RU.get(rule_code, "")
+        appendix_block = f"Уточнение по правилу:\n{appendix}\n\n" if appendix else ""
         return (
             f"{prompt_prefix}\n"
+            f"{appendix_block}"
             "Проведи AI-assisted аудит сущности Яндекс Директ.\n"
             f"Правило: {rule_code} ({rule_name})\n"
             f"Сущность: {json.dumps(entity, ensure_ascii=False)}\n"

@@ -14,4 +14,5 @@ async def health() -> HealthResponse:
         app_name=settings.app_name,
         environment=settings.environment,
         yandex_oauth_redirect_uri=redirect or None,
+        yandex_oauth_ui_default_redirect=settings.yandex_oauth_ui_return_url(),
     )

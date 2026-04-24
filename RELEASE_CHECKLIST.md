@@ -9,6 +9,9 @@
   - [ ] `POLZA_AI_API_KEY` set
   - [ ] `NEXT_PUBLIC_BASE_PATH=/YaDirect-analytics`
   - [ ] `NEXT_PUBLIC_API_V1_URL=https://atorichko.asur-adigital.ru/YaDirect-analytics/api/v1`
+  - [ ] Yandex OAuth: `YANDEX_OAUTH_CLIENT_ID`, `YANDEX_OAUTH_CLIENT_SECRET`, `YANDEX_OAUTH_REDIRECT_URI` (as in Yandex ID console)
+  - [ ] `YANDEX_OAUTH_UI_DEFAULT_REDIRECT` aligned with UI (e.g. `…/YaDirect-analytics/settings`) if not using code fallback
+  - [ ] (Optional) `YANDEX_OAUTH_TOKEN` for scripts only — not used by the OAuth web flow
 - [ ] Verify DB backups policy before migration.
 
 ## 1) Build and migrations

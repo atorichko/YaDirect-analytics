@@ -141,7 +141,7 @@ async def start_direct_oauth(
     yandex_redirect_uri = settings.yandex_oauth_redirect_uri.strip()
     if not yandex_redirect_uri:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing redirect uri")
-    ui_redirect_target = ui_redirect or "https://atorichko.asur-adigital.ru/YaDirect-analytics/settings"
+    ui_redirect_target = ui_redirect or settings.yandex_oauth_ui_return_url()
     state_payload = {
         "nonce": token_urlsafe(10),
         "exp": int((datetime.now(timezone.utc) + timedelta(minutes=STATE_TTL_MINUTES)).timestamp()),
@@ -235,7 +235,7 @@ async def oauth_callback(
         token_expires_at=token_expires_at,
     )
     await session.commit()
-    ui_redirect = str(payload.get("ui_redirect") or "https://atorichko.asur-adigital.ru/YaDirect-analytics/settings")
+    ui_redirect = str(payload.get("ui_redirect") or settings.yandex_oauth_ui_return_url())
     project_redirect = _to_project_redirect(ui_redirect=ui_redirect, account_id=str(account.id))
     sep = "&" if "?" in project_redirect else "?"
     return RedirectResponse(

@@ -1,6 +1,6 @@
 {
   "fixture_type": "yandex_direct_audit_test_account",
-  "catalog_version": "1.0.0",
+  "catalog_version": "1.0.3",
   "platform": "yandex_direct",
   "industry": "real_estate",
   "current_date": "2026-04-23",

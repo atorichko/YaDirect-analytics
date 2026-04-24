@@ -367,14 +367,14 @@ def test_duplicate_keywords_with_overlap_cross_campaign_on_fixture_semantics() -
         and {f.evidence.get("left_campaign_id"), f.evidence.get("right_campaign_id")} == {"C200", "C300"}
     ]
     assert cross, "expected cross-campaign overlap C200/C300 on fixture"
-    cross_group = [
+    cross_group_suppressed = [
         f
         for f in findings
         if f.evidence.get("overlap_kind") == "cross_group"
         and f.evidence.get("left_campaign_id") == "C200"
         and {f.evidence.get("left_group_id"), f.evidence.get("right_group_id")} == {"G2004", "G2005"}
     ]
-    assert cross_group, "expected G2004 vs G2005 partial overlap"
+    assert not cross_group_suppressed, "G2004 has minus-word «центр» — overlap with G2005 tail must be suppressed"
 
 
 def test_geo_text_targeting_mismatch_uses_yandex_region_ids() -> None:
