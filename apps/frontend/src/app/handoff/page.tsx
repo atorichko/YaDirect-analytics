@@ -139,10 +139,8 @@ export default function HandoffPage() {
         <h2 className="text-lg font-semibold">Каталог правил аудита</h2>
         <ul className="list-inside list-disc space-y-2 text-muted-foreground">
           <li>
-            Исходники описаний и справки во фронте: например{" "}
-            <code className="rounded bg-muted px-1">apps/frontend/src/data/rule-catalog.json</code>, корневой{" "}
-            <code className="rounded bg-muted px-1">каталог правил.json</code> (и копии в{" "}
-            <code className="rounded bg-muted px-1">temp/</code> для черновиков).
+            Единый источник структуры каталога для справки UI и проверок в коде:{" "}
+            <code className="rounded bg-muted px-1">apps/frontend/src/data/rule-catalog.json</code>.
           </li>
           <li>
             Реализация проверок в коде: <code className="rounded bg-muted px-1">l1_rules.py</code>,{" "}

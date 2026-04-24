@@ -12,10 +12,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+# Build context is monorepo root (see docker-compose.yml).
+COPY apps/backend/requirements.txt /app/requirements.txt
+RUN pip install -r /app/requirements.txt
 
-COPY . .
+COPY apps/backend/ /app/
+# Same catalog JSON as the UI (single source of truth for alignment tests in Docker).
+COPY apps/frontend/src/data/rule-catalog.json /app/frontend-data/rule-catalog.json
 
 EXPOSE 8000
 

@@ -70,6 +70,7 @@ docker compose run --rm backend python scripts/seed_demo_data.py
   - `POST /api/v1/rule-catalogs`
   - `POST /api/v1/rule-catalogs/{catalog_id}/activate`
   - `GET /api/v1/rule-catalogs/active`
+  - Исходный JSON каталога в репозитории: `apps/frontend/src/data/rule-catalog.json` (то же, что подхватывает UI `/help`). После правок загрузите и активируйте каталог в проде через API.
 - Reporting:
   - `GET /api/v1/ad-accounts`
   - `GET /api/v1/ad-accounts/{account_id}/campaigns`

@@ -1,0 +1,9 @@
+.git
+**/.git
+**/node_modules
+apps/frontend/.next
+apps/frontend/out
+**/.venv
+**/__pycache__
+**/.pytest_cache
+temp

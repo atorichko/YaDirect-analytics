@@ -14,8 +14,8 @@
 ## 1) Build and migrations
 
 - [ ] Pull latest code on VDS.
-- [ ] Build images:
-  - `docker compose build backend worker frontend`
+- [ ] Build images (backend/worker/beat use monorepo root context — подтягивают `rule-catalog.json` из frontend):
+  - `docker compose build backend worker beat frontend`
 - [ ] Run migrations:
   - `docker compose run --rm backend alembic upgrade head`
 - [ ] Seed admin (idempotent):

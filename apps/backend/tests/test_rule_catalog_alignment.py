@@ -9,20 +9,24 @@ from app.services.l3_rules import build_l3_rule_registry
 from tests.fixture_loader import load_fixture_dict
 
 
-def _catalog_file_path() -> Path:
+def _rule_catalog_path() -> Path:
+    """Canonical catalog: apps/frontend/src/data/rule-catalog.json (same as UI)."""
     here = Path(__file__).resolve()
-    bundled = here.parent / "fixtures" / "каталог правил.json"
-    if bundled.is_file():
-        return bundled
+    docker_bundle = Path("/app/frontend-data/rule-catalog.json")
+    if docker_bundle.is_file():
+        return docker_bundle
     for ancestor in here.parents:
-        candidate = ancestor / "каталог правил.json"
+        candidate = ancestor / "apps" / "frontend" / "src" / "data" / "rule-catalog.json"
         if candidate.is_file():
             return candidate
-    raise FileNotFoundError(f"Could not find `каталог правил.json` starting from {here}")
+    raise FileNotFoundError(
+        "Could not find apps/frontend/src/data/rule-catalog.json "
+        f"(monorepo checkout or Docker image with /app/frontend-data/rule-catalog.json). Started from {here}"
+    )
 
 
 def _catalog_rules() -> list[dict]:
-    payload = json.loads(_catalog_file_path().read_text(encoding="utf-8"))
+    payload = json.loads(_rule_catalog_path().read_text(encoding="utf-8"))
     rules = payload.get("rules")
     assert isinstance(rules, list), "catalog must contain `rules` list"
     return [r for r in rules if isinstance(r, dict)]
