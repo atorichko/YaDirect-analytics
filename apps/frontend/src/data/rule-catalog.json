@@ -1,5 +1,5 @@
 {
-  "catalog_version": "1.0.0",
+  "catalog_version": "1.0.4",
   "platform": "yandex_direct",
   "included_levels": ["L1", "L2", "L3"],
   "severity_enum": {
@@ -338,7 +338,7 @@
       "level": "L2",
       "entity_type": "campaign",
       "inputs": ["campaign.goal_ids[]", "metrika.goals[].status", "metrika.goals[].access"],
-      "detection_logic": "check each configured goal for existence and availability",
+      "detection_logic": "Для кампании с конверсионной стратегией: каждый id из campaign.goal_ids сопоставляется со снимком целей Метрики (metrika_goals по goal_id/id). Если цели нет в снимке — недоступна; если запись есть, но status в deleted/removed/archived или access в revoked/denied — недоступна. Любое такое совпадение даёт находку.",
       "fail_condition": "configured_goal_unavailable",
       "evidence_fields": ["campaign_id", "goal_id", "goal_status", "goal_access"],
       "recommendation_ru": "Заменить недоступную цель на действующую."
@@ -351,7 +351,7 @@
       "level": "L2",
       "entity_type": "campaign",
       "inputs": ["campaign.strategy_type", "stats.conversions", "analysis_period_days", "policy.min_conversions_for_learning"],
-      "detection_logic": "strategy_type in conversion_strategies AND conversions over analysis period < policy.min_conversions_for_learning",
+      "detection_logic": "Кампания с конверсионной стратегией (strategy_type): сравниваем stats.conversions (конверсии за stats.analysis_period_days) с порогом min_conversions_for_learning из правила. Если conversions < порога — находка.",
       "fail_condition": "insufficient_conversion_volume_for_learning",
       "evidence_fields": ["campaign_id", "strategy_type", "analysis_period_days", "conversions", "required_min_conversions"],
       "recommendation_ru": "Сменить стратегию или накопить больше конверсий."
@@ -364,7 +364,7 @@
       "level": "L2",
       "entity_type": "campaign",
       "inputs": ["campaign.daily_budget", "stats.hourly_impressions", "stats.limited_by_budget_flags", "analysis_period_days"],
-      "detection_logic": "detect repeated budget limitation events or early day traffic cutoff over analysis period",
+      "detection_logic": "Сравниваем stats.budget_limited_days (сколько дней в окне stats.analysis_period_days кампания была ограничена по бюджету) с порогом budget_limited_days_threshold из правила. Если факт ≥ порога — находка.",
       "fail_condition": "campaign_regularly_budget_limited",
       "evidence_fields": ["campaign_id", "analysis_period_days", "budget_limited_days", "avg_hour_of_budget_exhaustion"],
       "recommendation_ru": "Увеличить бюджет или перераспределить трафик."
@@ -455,7 +455,7 @@
       "level": "L3",
       "entity_type": "url",
       "inputs": ["ad.url", "http_check.redirect_chain[]"],
-      "detection_logic": "follow redirects and detect repeated URLs or loop termination",
+      "detection_logic": "По цепочке redirect_chain: если длина списка не равна числу уникальных URL (повтор узла) — зацикливание. В деталях выводится кратко «URL₁ ведёт на URL₂; …».",
       "fail_condition": "redirect_loop_detected",
       "evidence_fields": ["campaign_id", "group_id", "ad_id", "url_field", "checked_url", "redirect_chain"],
       "recommendation_ru": "Исправить цепочку редиректов."
@@ -481,7 +481,7 @@
       "level": "L3",
       "entity_type": "url",
       "inputs": ["ad.url", "http_check.final_url"],
-      "detection_logic": "compare source URL host with final URL host after redirects",
+      "detection_logic": "Сравниваем host исходного checked_url с host финального final_url после редиректов; при расхождении — находка. В деталях — цепочка редиректов (redirect_chain_flow_ru) и краткое пояснение domain_shift_ru.",
       "fail_condition": "source_and_final_domains_differ",
       "evidence_fields": ["campaign_id", "group_id", "ad_id", "source_domain", "final_domain", "redirect_chain"],
       "recommendation_ru": "Проверить корректность конечного домена."
@@ -519,8 +519,16 @@
       "severity": "high",
       "level": "L3",
       "entity_type": "url",
-      "inputs": ["ad.url", "ad.sitelinks[].url", "policy.required_utm_params[]"],
-      "detection_logic": "parse query string and validate presence of required UTM params",
+      "inputs": [
+        "ad.url",
+        "ad.sitelinks[].url",
+        "campaign.tracking_url",
+        "campaign.tracking_template",
+        "group.tracking_url",
+        "group.tracking_template",
+        "policy.required_utm_params[]"
+      ],
+      "detection_logic": "Для каждой ссылки объявления/быстрой ссылки: если в query нет всех policy.required_utm_params, проверяем URL-поля кампании и группы (tracking_url, tracking_template и т.д.). Если хотя бы на одном из трёх уровней полный набор параметров есть — ошибки нет.",
       "fail_condition": "required_utm_params_missing",
       "evidence_fields": ["campaign_id", "group_id", "ad_id", "url_field", "missing_utm_params"],
       "recommendation_ru": "Добавить обязательные UTM-параметры."

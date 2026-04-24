@@ -10,6 +10,7 @@ from app.services.l1_rules import FindingDraft, L1Context, build_l1_rule_registr
 from app.services.l2_rules import L2Context, build_l2_rule_registry
 from app.services.l3_rules import L3Context, build_l3_rule_registry
 from tests.fixture_loader import (
+    ad_groups_normalized_from_fixture,
     campaigns_normalized_from_fixture,
     l1_extensions_from_fixture,
     load_fixture_dict,
@@ -258,6 +259,8 @@ def _collect_tagged_findings(data: dict[str, Any]) -> list[tuple[str, FindingDra
         account_id=str(data.get("account", {}).get("account_id") or "acc_001"),
         ads=_fixture_ads_with_health(data),
         extensions=[],
+        campaigns=campaigns_normalized_from_fixture(data),
+        groups=ad_groups_normalized_from_fixture(data),
     )
     reg3 = build_l3_rule_registry()
     for code, fn in reg3.items():

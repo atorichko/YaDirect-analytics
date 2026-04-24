@@ -102,6 +102,9 @@ async def import_fixture(path: Path) -> dict:
                 "region_ids": sorted(set(region_union)),
                 "negative_keywords": c.get("negative_keywords") or [],
             }
+            for tk in ("tracking_url", "tracking_template", "campaign_tracking_url", "mobile_app_tracking_url", "href"):
+                if c.get(tk):
+                    c_norm[tk] = c[tk]
             await snapshots.upsert_snapshot(
                 account_id=account.id,
                 entity_type=SnapshotEntityType.campaign,
@@ -128,6 +131,9 @@ async def import_fixture(path: Path) -> dict:
                     "negative_keywords": g.get("negative_keywords") or [],
                     "audiences": g.get("audiences") or [],
                 }
+                for tk in ("tracking_url", "tracking_template", "campaign_tracking_url", "mobile_app_tracking_url", "href"):
+                    if g.get(tk):
+                        g_norm[tk] = g[tk]
                 await snapshots.upsert_snapshot(
                     account_id=account.id,
                     entity_type=SnapshotEntityType.ad_group,

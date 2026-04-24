@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qsl, urlparse
 
@@ -19,6 +19,8 @@ class L3Context:
     account_id: str
     ads: list[dict[str, Any]]
     extensions: list[dict[str, Any]]
+    campaigns: list[dict[str, Any]] = field(default_factory=list)
+    groups: list[dict[str, Any]] = field(default_factory=list)
 
 
 L3RuleHandler = Callable[[L3Context, dict[str, Any]], list[FindingDraft]]
@@ -60,6 +62,51 @@ def _collect_ad_urls(ad: dict[str, Any]) -> list[tuple[str, str, str | None]]:
     return [(r["field"], r["url"], r["sitelink_id"]) for r in _iter_ad_url_targets(ad)]
 
 
+def _tracking_like_urls_from_entity(entity: dict[str, Any]) -> list[str]:
+    """URL-поля кампании/группы, где может быть задана UTM-разметка (шаблон ссылки)."""
+    keys = (
+        "tracking_url",
+        "tracking_template",
+        "campaign_tracking_url",
+        "mobile_app_tracking_url",
+        "href",
+    )
+    out: list[str] = []
+    for k in keys:
+        v = entity.get(k)
+        if isinstance(v, str) and v.strip().startswith(("http://", "https://")):
+            out.append(v.strip())
+    return out
+
+
+def _campaign_or_group_covers_required_utm(ctx: L3Context, ad: dict[str, Any], required: list[str]) -> bool:
+    """True, если на уровне кампании или группы объявления есть URL со всеми обязательными UTM."""
+    if not required:
+        return False
+    cid = str(ad.get("campaign_id") or "")
+    gid = str(ad.get("ad_group_id") or "")
+    for camp in ctx.campaigns:
+        if str(camp.get("id")) != cid:
+            continue
+        for u in _tracking_like_urls_from_entity(camp):
+            parsed = urlparse(u)
+            params = {k.lower(): v for k, v in parse_qsl(parsed.query, keep_blank_values=True)}
+            if all(p.lower() in params for p in required):
+                return True
+    for grp in ctx.groups:
+        if str(grp.get("id")) != gid:
+            continue
+        gc = str(grp.get("campaign_id") or "")
+        if cid and gc and gc != cid:
+            continue
+        for u in _tracking_like_urls_from_entity(grp):
+            parsed = urlparse(u)
+            params = {k.lower(): v for k, v in parse_qsl(parsed.query, keep_blank_values=True)}
+            if all(p.lower() in params for p in required):
+                return True
+    return False
+
+
 def _url_syntax_issues(url: str, parsed) -> list[str]:
     issues: list[str] = []
     scheme = (parsed.scheme or "").lower()
@@ -85,6 +132,123 @@ def _redirect_hop_count(chain: list[Any]) -> int:
     if not chain:
         return 0
     return max(0, len(chain) - 1)
+
+
+def _redirect_chain_flow_ru(chain: list[Any]) -> str | None:
+    """Кратко: какой URL на какой ведёт по шагам (для карточки находки)."""
+    urls = [str(x).strip() for x in chain if str(x).strip()]
+    if len(urls) < 2:
+        return None
+    parts = [f"{urls[i]} ведёт на {urls[i + 1]}" for i in range(len(urls) - 1)]
+    return "; ".join(parts) + "."
+
+
+def _url_query_highlight_all_bad(url: str) -> list[dict[str, Any]]:
+    """Вся query-строка помечается как проблемная (удобно для UTM/синтаксиса)."""
+    if "?" not in url:
+        return [{"text": url, "ok": False}]
+    base, rest = url.split("?", 1)
+    return [{"text": f"{base}?", "ok": True}, {"text": rest, "ok": False}]
+
+
+def _url_placeholder_highlight(value: str, placeholders: list[str]) -> list[dict[str, Any]]:
+    if not placeholders:
+        return [{"text": value, "ok": True}]
+    bad = sorted(set(placeholders), key=len, reverse=True)
+    segments: list[dict[str, Any]] = []
+    cursor = 0
+    n = len(value)
+    while cursor < n:
+        earliest: tuple[int, int, str] | None = None
+        for ph in bad:
+            pos = value.find(ph, cursor)
+            if pos < 0:
+                continue
+            end = pos + len(ph)
+            cand = (pos, end, ph)
+            if earliest is None or pos < earliest[0]:
+                earliest = cand
+        if earliest is None:
+            segments.append({"text": value[cursor:], "ok": True})
+            break
+        pos, end, ph = earliest
+        if pos > cursor:
+            segments.append({"text": value[cursor:pos], "ok": True})
+        segments.append({"text": ph, "ok": False})
+        cursor = end
+    return segments
+
+
+def _account_utm_main_url_fingerprint(url: str) -> str:
+    """Грубая сигнатура разметки по основной ссылке объявления (для сверки в масштабе аккаунта)."""
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in {"http", "https"}:
+        return "scheme:not_http"
+    raw_q = parsed.query or ""
+    raw_pairs = parse_qsl(raw_q, keep_blank_values=True)
+    errs = _utm_error_codes(raw_q, raw_pairs)
+    if errs:
+        return f"broken:{','.join(errs[:4])}"
+    d = {k.lower(): str(v).strip() for k, v in raw_pairs}
+    parts: list[str] = []
+    for key in sorted(_STRICT_UTM_KEYS):
+        v = d.get(key, "")
+        vl = v.strip().lower()
+        if not vl or vl in _TECH_VALUES:
+            parts.append(f"{key}:∅")
+        else:
+            parts.append(f"{key}:{vl[:64]}")
+    return "utm|" + "|".join(parts)
+
+
+def _inconsistent_utm_account_wide(ctx: L3Context, rule: dict[str, Any]) -> list[FindingDraft]:
+    if not rule.get("account_wide_utm", True):
+        return []
+    buckets: dict[str, dict[str, Any]] = {}
+    for ad in ctx.ads:
+        main = ad.get("url") or ad.get("final_url")
+        if not isinstance(main, str) or not main.strip():
+            continue
+        cid = str(ad.get("campaign_id") or "")
+        fp = _account_utm_main_url_fingerprint(main.strip())
+        if fp not in buckets:
+            buckets[fp] = {"sample_url": main.strip(), "campaigns": set()}
+        buckets[fp]["campaigns"].add(cid)
+    if len(buckets) < 2:
+        return []
+    all_camps: set[str] = set()
+    for b in buckets.values():
+        all_camps |= b["campaigns"]
+    if len(all_camps) < 2:
+        return []
+    pattern_samples = {k: buckets[k]["sample_url"] for k in sorted(buckets.keys())[:12]}
+    return [
+        FindingDraft(
+            entity_key=f"account:{ctx.account_id}:utm_pattern_mixed",
+            issue_location=f"account:{ctx.account_id}",
+            campaign_external_id=None,
+            group_external_id=None,
+            ad_external_id=None,
+            evidence={
+                "scope": "account",
+                "account_id": ctx.account_id,
+                "distinct_utm_patterns": sorted(buckets.keys()),
+                "pattern_sample_urls": pattern_samples,
+                "campaigns_with_mixed_patterns": sorted(all_camps),
+                "issue_explanation_ru": (
+                    "В аккаунте в разных кампаниях используются несовместимые шаблоны UTM "
+                    "(отличаются utm_source / utm_medium / utm_campaign, встречаются укороченные "
+                    "или повреждённые варианты). Из-за этого нельзя корректно сводить статистику "
+                    "в одной воронке."
+                ),
+            },
+            impact_ru="Фрагментированная UTM-разметка ломает сводную аналитику по аккаунту.",
+            recommendation_ru=rule.get(
+                "recommendation_ru",
+                "Утвердить единый шаблон UTM и выровнять ссылки во всех кампаниях.",
+            ),
+        )
+    ]
 
 
 def _utm_error_codes(raw_query: str, raw_pairs: list[tuple[str, str]]) -> list[str]:
@@ -139,9 +303,15 @@ def _invalid_url_syntax(ctx: L3Context, rule: dict[str, Any]) -> list[FindingDra
                 "ad_id": ad.get("id"),
                 "url_field": field,
                 "url_value": value,
+                "display_url_full": value,
                 "validation_error": "invalid_syntax",
                 "url_syntax_issues": issues,
                 "url_value_segments": parts,
+                "full_url_highlight_segments": parts,
+                "issue_explanation_ru": (
+                    "URL не соответствует ожидаемому формату (схема http/https, хост, кодировка). "
+                    "Клик может не открыть нужную страницу."
+                ),
             }
             if sitelink_id:
                 ev["sitelink_id"] = sitelink_id
@@ -168,6 +338,8 @@ def _missing_required_utm(ctx: L3Context, rule: dict[str, Any]) -> list[FindingD
             missing = [param for param in required if param.lower() not in params]
             if not missing:
                 continue
+            if _campaign_or_group_covers_required_utm(ctx, ad, required):
+                continue
             ek = f"ad:{ad.get('id')}:{field}:missing_utm"
             if sitelink_id:
                 ek = f"ad:{ad.get('id')}:sl:{sitelink_id}:missing_utm"
@@ -175,10 +347,18 @@ def _missing_required_utm(ctx: L3Context, rule: dict[str, Any]) -> list[FindingD
                 "ad_id": ad.get("id"),
                 "url_field": field,
                 "checked_url": value,
+                "display_url_full": value,
+                "url_query_highlight_segments": _url_query_highlight_all_bad(value),
                 "missing_utm_params": missing,
                 "utm_param_status": [
                     {"param": p, "present": p.lower() in params, "value": params.get(p.lower())} for p in required
                 ],
+                "issue_explanation_ru": (
+                    "В финальном URL не хватает обязательных UTM-параметров из политики аккаунта, "
+                    "и полный набор этих параметров не найден ни в ссылке объявления/быстрой ссылки, "
+                    "ни в URL-полях уровня кампании или группы (tracking_url, tracking_template и т.п.). "
+                    "В отчётах аналитики кампания и объявление не сопоставляются с источником трафика."
+                ),
             }
             if sitelink_id:
                 ev["sitelink_id"] = sitelink_id
@@ -224,8 +404,14 @@ def _invalid_utm(ctx: L3Context, rule: dict[str, Any]) -> list[FindingDraft]:
                 "ad_id": ad.get("id"),
                 "url_field": field,
                 "checked_url": value,
+                "display_url_full": value,
+                "url_query_highlight_segments": _url_query_highlight_all_bad(value),
                 "utm_validation_errors": err_codes,
                 "utm_issue_details": details,
+                "issue_explanation_ru": (
+                    "Строка запроса URL содержит ошибки UTM: пустые значения, дубли параметров или "
+                    "некорректные разделители. Часть кликов уйдёт в аналитику с битыми метками."
+                ),
             }
             if sitelink_id:
                 ev["sitelink_id"] = sitelink_id
@@ -279,9 +465,14 @@ def _main_and_sitelink_domains_mismatch(ctx: L3Context, rule: dict[str, Any]) ->
                 evidence={
                     "ad_id": ad.get("id"),
                     "main_url": main_url.strip(),
+                    "main_url_display": main_url.strip(),
                     "main_domain": main_domain,
                     "sitelink_urls": rows,
+                    "sitelink_urls_mismatched": [r for r in rows if not r.get("matches_main_domain")],
                     "sitelink_domains": sorted(set(mismatch_domains)),
+                    "urls_comparison_note_ru": (
+                        "Ниже — основная ссылка объявления и быстрые ссылки с другим доменом."
+                    ),
                 },
                 recommendation=rule.get("recommendation_ru", "Привести все ссылки объявления к согласованному домену."),
                 impact="Разные домены в объявлении и быстрых ссылках ухудшают консистентность лендинга.",
@@ -332,9 +523,14 @@ def _empty_or_technical_url_params(ctx: L3Context, rule: dict[str, Any]) -> list
                 "ad_id": ad.get("id"),
                 "url_field": field,
                 "checked_url": value,
+                "display_url_full": value,
                 "invalid_params": sorted(bad.keys()),
                 "empty_or_technical_values": bad,
                 "query_highlight_segments": segments,
+                "issue_explanation_ru": (
+                    "В query-строке есть параметры с пустыми или техническими значениями "
+                    "(undefined, null и т.п.) — они засоряют отчёты и ломают сегментацию."
+                ),
             }
             if sitelink_id:
                 ev["sitelink_id"] = sitelink_id
@@ -365,8 +561,13 @@ def _unresolved_placeholder_in_url(ctx: L3Context, rule: dict[str, Any]) -> list
                 "ad_id": ad.get("id"),
                 "url_field": field,
                 "checked_url": value,
+                "display_url_full": value,
+                "url_highlight_segments": _url_placeholder_highlight(value, matched),
                 "matched_placeholder": matched[0] if len(matched) == 1 else matched,
                 "matched_placeholders": matched,
+                "issue_explanation_ru": (
+                    "В URL остался нераскрытый макрос/плейсхолдер — переход может вести на неверный адрес."
+                ),
             }
             if sitelink_id:
                 ev["sitelink_id"] = sitelink_id
@@ -383,8 +584,8 @@ def _unresolved_placeholder_in_url(ctx: L3Context, rule: dict[str, Any]) -> list
     return out
 
 
-def _inconsistent_utm_pattern(ctx: L3Context, rule: dict[str, Any]) -> list[FindingDraft]:
-    """Flag when utm_source / utm_medium / utm_campaign differ across URLs of the same ad."""
+def _inconsistent_utm_within_each_ad(ctx: L3Context, rule: dict[str, Any]) -> list[FindingDraft]:
+    """Разные utm_source / utm_medium / utm_campaign между URL одного объявления."""
     out: list[FindingDraft] = []
     for ad in ctx.ads:
         by_key: dict[str, set[str]] = {k: set() for k in _STRICT_UTM_KEYS}
@@ -406,7 +607,14 @@ def _inconsistent_utm_pattern(ctx: L3Context, rule: dict[str, Any]) -> list[Find
                 ad,
                 entity_key=f"ad:{ad.get('id')}:inconsistent_utm",
                 issue_location=f"ad:{ad.get('id')}",
-                evidence={"ad_id": ad.get("id"), "utm_conflicts": conflicts},
+                evidence={
+                    "ad_id": ad.get("id"),
+                    "utm_conflicts": conflicts,
+                    "issue_explanation_ru": (
+                        "У основной ссылки и быстрых ссылок одного объявления расходятся ключевые UTM — "
+                        "сессии нельзя надёжно сопоставить в одной цепочке."
+                    ),
+                },
                 recommendation=rule.get(
                     "recommendation_ru",
                     "Унифицировать UTM-разметку между основной ссылкой и быстрыми ссылками.",
@@ -414,6 +622,12 @@ def _inconsistent_utm_pattern(ctx: L3Context, rule: dict[str, Any]) -> list[Find
                 impact="Разная UTM-разметка внутри одного объявления ломает сопоставление данных в аналитике.",
             )
         )
+    return out
+
+
+def _inconsistent_utm_pattern(ctx: L3Context, rule: dict[str, Any]) -> list[FindingDraft]:
+    out = _inconsistent_utm_account_wide(ctx, rule)
+    out.extend(_inconsistent_utm_within_each_ad(ctx, rule))
     return out
 
 
@@ -428,17 +642,19 @@ def _http_ssl_redirect_based_checks(ctx: L3Context, rule: dict[str, Any]) -> lis
             if not broken:
                 continue
             ids = [str(x.get("sitelink_id")) for x in broken if x.get("sitelink_id") is not None]
+            broken_rows = [
+                {"sitelink_id": str(x.get("sitelink_id")), "url": x.get("url")} for x in broken if isinstance(x, dict)
+            ]
             out.append(
                 _base_finding(
                     ad,
                     entity_key=f"ad:{ad.get('id')}:{code.lower()}",
                     issue_location=f"ad:{ad.get('id')}",
                     evidence={
+                        "broken_sitelink_urls": broken_rows,
+                        "broken_quick_links_note_ru": "Битые быстрые ссылки (URL):",
                         "ad_id": ad.get("id"),
                         "broken_sitelinks": ids,
-                        "broken_sitelink_urls": [
-                            {"sitelink_id": str(x.get("sitelink_id")), "url": x.get("url")} for x in broken if isinstance(x, dict)
-                        ],
                     },
                     recommendation=rule.get("recommendation_ru", "Исправить ссылку."),
                     impact="Проблемы URL/редиректов/SSL ведут к потере трафика и конверсий.",
@@ -468,6 +684,7 @@ def _http_ssl_redirect_based_checks(ctx: L3Context, rule: dict[str, Any]) -> lis
                 "ad_id": ad.get("id"),
                 "url_field": field,
                 "checked_url": source_url,
+                "display_url_full": source_url,
                 "final_url": final_url,
             }
             if sitelink_id:
@@ -486,16 +703,32 @@ def _http_ssl_redirect_based_checks(ctx: L3Context, rule: dict[str, Any]) -> lis
                 evidence["ssl_error"] = ssl_error
             elif code == "REDIRECT_LOOP":
                 trigger = len(redirect_chain) != len(set(redirect_chain))
+                flow_ru = _redirect_chain_flow_ru(redirect_chain)
+                if flow_ru:
+                    evidence["redirect_chain_flow_ru"] = flow_ru
                 evidence["redirect_chain"] = redirect_chain
             elif code == "REDIRECT_CHAIN_TOO_LONG":
                 trigger = hop_count > max_hops
                 evidence["redirect_hops"] = hop_count
-                evidence["redirect_chain"] = redirect_chain
                 evidence["max_redirect_hops"] = max_hops
+                flow_ru = _redirect_chain_flow_ru(redirect_chain)
+                if flow_ru:
+                    evidence["redirect_chain_flow_ru"] = flow_ru
+                evidence["redirect_chain"] = redirect_chain
             elif code == "FINAL_DOMAIN_DIFFERS_AFTER_REDIRECT":
                 trigger = bool(source_domain and final_domain and source_domain != final_domain)
                 evidence["source_domain"] = source_domain
                 evidence["final_domain"] = final_domain
+                flow_ru = _redirect_chain_flow_ru(redirect_chain)
+                if flow_ru:
+                    evidence["redirect_chain_flow_ru"] = flow_ru
+                if redirect_chain:
+                    evidence["redirect_chain"] = redirect_chain
+                if source_url and final_url:
+                    evidence["domain_shift_ru"] = (
+                        f"Исходная ссылка ведёт на хост «{source_domain}», после редиректов финальный URL — «{final_url}» "
+                        f"(хост «{final_domain}»)."
+                    )
             elif code == "HTTP_USED_INSTEAD_OF_HTTPS":
                 trigger = source_url.startswith("http://") or final_url.startswith("http://")
 

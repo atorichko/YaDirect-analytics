@@ -49,22 +49,51 @@ def campaigns_normalized_from_fixture(data: dict[str, Any]) -> list[dict[str, An
                     region_union.add(int(rid))
                 except (TypeError, ValueError):
                     continue
-        out.append(
-            {
-                "id": cid,
-                "name": c.get("campaign_name"),
-                "status": c.get("status"),
-                "type": c.get("type") or c.get("strategy_type"),
-                "strategy_type": c.get("strategy_type"),
-                "metrika_counter_id": c.get("metrika_counter_id"),
-                "goal_ids": c.get("goal_ids") or [],
-                "daily_budget": c.get("daily_budget"),
-                "stats": c.get("stats") or {},
-                "geo": c.get("geo") or [],
-                "region_ids": sorted(region_union),
-                "negative_keywords": c.get("negative_keywords") or [],
+        row: dict[str, Any] = {
+            "id": cid,
+            "name": c.get("campaign_name"),
+            "status": c.get("status"),
+            "type": c.get("type") or c.get("strategy_type"),
+            "strategy_type": c.get("strategy_type"),
+            "metrika_counter_id": c.get("metrika_counter_id"),
+            "goal_ids": c.get("goal_ids") or [],
+            "daily_budget": c.get("daily_budget"),
+            "stats": c.get("stats") or {},
+            "geo": c.get("geo") or [],
+            "region_ids": sorted(region_union),
+            "negative_keywords": c.get("negative_keywords") or [],
+        }
+        for tk in ("tracking_url", "tracking_template", "campaign_tracking_url", "mobile_app_tracking_url", "href"):
+            if c.get(tk):
+                row[tk] = c[tk]
+        out.append(row)
+    return out
+
+
+def ad_groups_normalized_from_fixture(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Нормализованные группы (как в import_yandex_fixture) — для L3 UTM по иерархии кампания/группа."""
+    out: list[dict[str, Any]] = []
+    for c in data.get("campaigns", []) or []:
+        cid = str(c.get("campaign_id") or "")
+        for g in c.get("groups", []) or []:
+            gid = str(g.get("group_id") or "")
+            if not gid:
+                continue
+            row: dict[str, Any] = {
+                "id": gid,
+                "campaign_id": cid,
+                "name": g.get("group_name"),
+                "status": g.get("status"),
+                "serving_status": g.get("serving_status"),
+                "autotargeting": g.get("autotargeting"),
+                "region_ids": g.get("region_ids") or [],
+                "negative_keywords": g.get("negative_keywords") or [],
+                "audiences": g.get("audiences") or [],
             }
-        )
+            for tk in ("tracking_url", "tracking_template", "campaign_tracking_url", "mobile_app_tracking_url", "href"):
+                if g.get(tk):
+                    row[tk] = g[tk]
+            out.append(row)
     return out
 
 

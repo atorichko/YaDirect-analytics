@@ -183,7 +183,17 @@ def _conversion_strategy_with_unavailable_goal(ctx: L2Context, rule: dict[str, A
             continue
         campaign_id = str(campaign.get("id"))
         first = bad[0]
-        ev: dict[str, Any] = {"campaign_id": campaign_id, "problem_goals": bad}
+        ev: dict[str, Any] = {
+            "campaign_id": campaign_id,
+            "problem_goals": bad,
+            "check_logic_ru": (
+                "Для кампании с конверсионной стратегией перебираем campaign.goal_ids. "
+                "Каждый id сопоставляем со снимком целей Метрики (metrika_goals по goal_id/id): "
+                "если цели нет в снимке — reason not_found_in_metrika; если запись есть, "
+                "но status в deleted/removed/archived или access в revoked/denied — цель считается недоступной. "
+                "Если хотя бы одна из настроенных целей не найдена или недоступна, формируется эта находка."
+            ),
+        }
         gid = str(first.get("goal_id") or "")
         if gid:
             ev["goal_id"] = gid
@@ -231,6 +241,12 @@ def _conversion_strategy_without_learning_data(ctx: L2Context, rule: dict[str, A
                     "conversions": conversions,
                     "required_min_conversions": min_required,
                     "analysis_period_days": stats.get("analysis_period_days"),
+                    "check_logic_ru": (
+                        "Берём кампании, у которых strategy_type относится к конверсионным стратегиям. "
+                        "Сравниваем stats.conversions (число конверсий за окно stats.analysis_period_days из снимка) "
+                        f"с порогом min_conversions_for_learning из правила (здесь {min_required}). "
+                        "Если conversions строго меньше порога — находка: для обучения стратегии не хватает статистики."
+                    ),
                 },
                 impact_ru="Стратегия по конверсиям не обучается стабильно из-за нехватки данных.",
                 recommendation_ru=rule.get("recommendation_ru", "Сменить стратегию или накопить больше конверсий."),
@@ -261,6 +277,12 @@ def _campaign_chronic_budget_limit(ctx: L2Context, rule: dict[str, Any]) -> list
                     "budget_limited_days": budget_limited_days,
                     "avg_hour_of_budget_exhaustion": stats.get("avg_hour_of_budget_exhaustion"),
                     "threshold_days": threshold_days,
+                    "check_logic_ru": (
+                        "Сравниваем stats.budget_limited_days (сколько дней в окне stats.analysis_period_days "
+                        "кампания была ограничена по бюджету) с порогом budget_limited_days_threshold из правила "
+                        f"(здесь {threshold_days}). Если budget_limited_days ≥ порога — находка: кампания системно "
+                        "упирается в бюджет и недополучает показы."
+                    ),
                 },
                 impact_ru="Кампания регулярно упирается в бюджет и теряет потенциальный трафик.",
                 recommendation_ru=rule.get("recommendation_ru", "Увеличить бюджет или перераспределить трафик."),

@@ -151,11 +151,25 @@ class L3AuditService:
         extensions = self._latest_snapshots_as_dicts(
             await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.extension)
         )
+        campaigns = self._latest_snapshots_as_dicts(
+            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.campaign)
+        )
+        groups = self._latest_snapshots_as_dicts(
+            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad_group)
+        )
         if campaign_external_id:
             ads = [item for item in ads if str(item.get("campaign_id")) == campaign_external_id]
             extensions = [item for item in extensions if str(item.get("campaign_id")) == campaign_external_id]
+            campaigns = [item for item in campaigns if str(item.get("id")) == campaign_external_id]
+            groups = [item for item in groups if str(item.get("campaign_id")) == campaign_external_id]
         ads = [item for item in ads if _is_active_state(item.get("state") or item.get("status"))]
-        return L3Context(account_id=str(account_id), ads=ads, extensions=extensions)
+        return L3Context(
+            account_id=str(account_id),
+            ads=ads,
+            extensions=extensions,
+            campaigns=campaigns,
+            groups=groups,
+        )
 
     @staticmethod
     def _latest_snapshots_as_dicts(snapshots: list[EntitySnapshot]) -> list[dict]:
