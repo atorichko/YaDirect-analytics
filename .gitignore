@@ -39,5 +39,8 @@ out/
 *.log
 logs/
 
+# Local scratch (fixtures notes, экспорт ожиданий и т.п.)
+temp/
+
 # Docker
 *.pid
