@@ -221,8 +221,10 @@ export default function RulesPage() {
             token={token}
             onPublished={async () => {
               setError(null);
+              const t = getAccessToken();
+              if (!t) return;
               try {
-                await Promise.all([loadCatalog(token), refreshCoverageMeta(token)]);
+                await Promise.all([loadCatalog(t), refreshCoverageMeta(t)]);
               } catch {
                 setError("Не удалось обновить список правил после публикации.");
               }

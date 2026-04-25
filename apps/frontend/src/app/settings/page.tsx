@@ -374,8 +374,10 @@ export default function SettingsPage() {
           token={token}
           disabled={loading}
           onPublished={async () => {
+            const t = getAccessToken();
+            if (!t) return;
             try {
-              const coverageData = await apiGet<CoverageResponse>("/rule-catalogs/active/coverage", token);
+              const coverageData = await apiGet<CoverageResponse>("/rule-catalogs/active/coverage", t);
               setCoverage(coverageData);
             } catch {
               setCoverage(null);
