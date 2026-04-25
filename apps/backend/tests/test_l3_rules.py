@@ -30,6 +30,21 @@ def test_unresolved_placeholder_ignores_yandex_dynamic_macros() -> None:
     assert rule(ctx, {"recommendation_ru": "fix"}) == []
 
 
+def test_unresolved_placeholder_ignores_calltouch_style_yandex_macros() -> None:
+    rule = build_l3_rule_registry()["UNRESOLVED_PLACEHOLDER_IN_URL"]
+    url = (
+        "https://mrqz.me/bm36?calltouch_tm=yd_c:{campaign_id}_gb:{gbid}_ad:{ad_id}_"
+        "ph:{phrase_id}_st:{source_type}_pt:{position_type}_p:{position}_s:{source}_"
+        "dt:{device_type}_reg:{region_id}_ret:{retargeting_id}_apt:{addphrasestext}"
+    )
+    ctx = L3Context(
+        account_id="acc1",
+        ads=[{"id": "a1", "campaign_id": "c1", "ad_group_id": "g1", "url": url}],
+        extensions=[],
+    )
+    assert rule(ctx, {"recommendation_ru": "fix"}) == []
+
+
 def test_missing_required_utm_rule() -> None:
     rule = build_l3_rule_registry()["MISSING_REQUIRED_UTM"]
     ctx = L3Context(

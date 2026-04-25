@@ -741,7 +741,9 @@ export function GroupedDetailsSection({
                   `Кампании ${lc} ↔ ${rc}: `
                 );
             } else if (kind === "cross_group") {
-              const ccmp = String(r.campaign_external_id ?? pageCampaignId ?? "");
+              const ccmp = String(
+                ev.left_campaign_id ?? ev.right_campaign_id ?? r.campaign_external_id ?? pageCampaignId ?? "",
+              );
               prefix =
                 yandexLogin && /^\d+$/.test(ccmp) && /^\d+$/.test(lg) && /^\d+$/.test(rg) ? (
                   <>
@@ -753,7 +755,9 @@ export function GroupedDetailsSection({
                   `Группы ${lg} ↔ ${rg}: `
                 );
             } else if (lg) {
-              const ccmp = String(r.campaign_external_id ?? pageCampaignId ?? "");
+              const ccmp = String(
+                ev.left_campaign_id ?? ev.right_campaign_id ?? r.campaign_external_id ?? pageCampaignId ?? "",
+              );
               prefix =
                 yandexLogin && /^\d+$/.test(ccmp) && /^\d+$/.test(lg) ? (
                   <>

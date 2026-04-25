@@ -139,8 +139,19 @@ def _is_servable_yandex_keyword(keyword: dict[str, Any]) -> bool:
     return _is_active(keyword.get("status")) or _is_active(keyword.get("state"))
 
 
+def _normalize_phrase_minus_hyphens(text: str) -> str:
+    """Единый минус ASCII: в выгрузках встречаются − (U+2212), –, —."""
+    return (
+        str(text)
+        .replace("\u2212", "-")
+        .replace("\u2013", "-")
+        .replace("\u2014", "-")
+        .lower()
+    )
+
+
 def _normalize_keyword(text: str) -> str:
-    raw_tokens = [item for item in str(text).lower().split() if item]
+    raw_tokens = [item for item in _normalize_phrase_minus_hyphens(text).split() if item]
     positive: list[str] = []
     negative: list[str] = []
     for token in raw_tokens:
@@ -159,7 +170,7 @@ def _normalize_keyword(text: str) -> str:
 
 
 def _keyword_positive_tokens(text: str) -> set[str]:
-    raw_tokens = [item for item in str(text).lower().split() if item]
+    raw_tokens = [item for item in _normalize_phrase_minus_hyphens(text).split() if item]
     out: set[str] = set()
     for token in raw_tokens:
         if token.startswith("-"):
@@ -215,7 +226,7 @@ def _keyword_overlap_excluded_by_negatives(
 
 def _keyword_phrase_minus_tokens(text: str) -> set[str]:
     """Минус-слова, заданные прямо во фразе (токены с ведущим «-»)."""
-    raw_tokens = [item for item in str(text).lower().split() if item]
+    raw_tokens = [item for item in _normalize_phrase_minus_hyphens(text).split() if item]
     out: set[str] = set()
     for token in raw_tokens:
         if not token.startswith("-"):

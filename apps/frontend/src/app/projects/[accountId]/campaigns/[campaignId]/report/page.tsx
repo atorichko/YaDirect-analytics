@@ -468,6 +468,12 @@ export default function CampaignReportPage() {
   const [auditRunning, setAuditRunning] = useState(false);
   const [catalogRecommendations, setCatalogRecommendations] = useState<Record<string, string>>({});
   const [yandexClientLogin, setYandexClientLogin] = useState<string | null>(null);
+  /** Fallback если GET /ad-accounts не вернул login (один клиент на инсталляцию). Сборка: NEXT_PUBLIC_YANDEX_ULOGIN. */
+  const defaultYandexUlogin = useMemo(
+    () => (process.env.NEXT_PUBLIC_YANDEX_ULOGIN || "").trim() || null,
+    [],
+  );
+  const effectiveYandexLogin = yandexClientLogin ?? defaultYandexUlogin;
   const levels = ["L1", "L2", "L3", "AI"] as const;
 
   useEffect(() => {
@@ -636,10 +642,10 @@ export default function CampaignReportPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Отчет кампании: {campaignName ?? campaignId}</h1>
           <p className="text-sm text-muted-foreground">
             ID кампании:{" "}
-            {yandexClientLogin && /^\d+$/.test(campaignId) ? (
+            {effectiveYandexLogin && /^\d+$/.test(campaignId) ? (
               <a
                 className="text-blue-700 underline underline-offset-2"
-                href={dnaCampaignHref(yandexClientLogin, campaignId)}
+                href={dnaCampaignHref(effectiveYandexLogin, campaignId)}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -648,13 +654,13 @@ export default function CampaignReportPage() {
             ) : (
               campaignId
             )}
-            {yandexClientLogin ? (
+            {effectiveYandexLogin ? (
               <>
                 {" "}
                 ·{" "}
                 <a
                   className="text-blue-700 underline underline-offset-2"
-                  href={dnaAccountHref(yandexClientLogin)}
+                  href={dnaAccountHref(effectiveYandexLogin)}
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -724,7 +730,7 @@ export default function CampaignReportPage() {
             {displayRows.map((row) => {
               const title = ruleTitleRu(row.rule_code, row.rule_name);
               const groupedLayout = rowUsesGroupedLayout(row);
-              const locNode = reportRowLocLinks(row, campaignId, yandexClientLogin);
+              const locNode = reportRowLocLinks(row, campaignId, effectiveYandexLogin);
               return (
                 <tr key={groupedLayout ? `grp:${row.rule_code}:${campaignId}` : row.id} className="border-t">
                   <td className="px-3 py-2 align-top">
@@ -755,7 +761,7 @@ export default function CampaignReportPage() {
                             <p className="text-sm">{recommendationText(row, catalogRecommendations)}</p>
                             <GroupedDetailsSection
                               row={row}
-                              yandexLogin={yandexClientLogin}
+                              yandexLogin={effectiveYandexLogin}
                               pageCampaignId={campaignId}
                             />
                           </>
@@ -765,7 +771,7 @@ export default function CampaignReportPage() {
                             <p className="mt-2 text-xs font-medium text-muted-foreground">Детали (снимок аудита)</p>
                             <EvidenceBlock
                               row={row}
-                              yandexClientLogin={yandexClientLogin}
+                              yandexClientLogin={effectiveYandexLogin}
                               pageCampaignId={campaignId}
                             />
                           </>

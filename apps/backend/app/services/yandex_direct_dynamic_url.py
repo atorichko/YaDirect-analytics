@@ -39,8 +39,12 @@ _YANDEX_DYNAMIC_INNER_NAMES: frozenset[str] = frozenset(
         "interest_id",
         "interest_name",
         "addphrases",
+        "addphrasestext",
         "adds",
         "all_goals",
+        # Подстановки «параметр 1/2» в ссылке (XLS/Commander/API), см. справку Директа.
+        "param1",
+        "param2",
     }
 )
 
