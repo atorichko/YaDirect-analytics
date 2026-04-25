@@ -10,6 +10,7 @@ from app.services.ai_audit_service import AIAuditService
 from app.services.l1_audit_service import L1AuditService
 from app.services.l2_audit_service import L2AuditService
 from app.services.l3_audit_service import L3AuditService
+from app.services import audit_task_registry
 from app.workers.celery_app import celery_app
 
 
@@ -62,6 +63,8 @@ def run_campaign_full_audit_task(
     actor_user_id: str | None = None,
     max_entities: int = 20,
 ) -> dict:
+    task_id = run_campaign_full_audit_task.request.id
+
     async def _run() -> dict:
         actor_uuid = UUID(actor_user_id) if actor_user_id else None
         async with AsyncSessionLocal() as session:
@@ -99,7 +102,10 @@ def run_campaign_full_audit_task(
             "ai_audit_id": str(ai.audit_id),
         }
 
-    return asyncio.run(_run())
+    try:
+        return asyncio.run(_run())
+    finally:
+        audit_task_registry.clear_campaign_if_current(account_id, campaign_id, task_id)
 
 
 @celery_app.task(name="app.workers.tasks.run_account_active_campaigns_full_audit", bind=True)
@@ -124,10 +130,11 @@ def run_account_active_campaigns_full_audit_task(
         done_steps = 0
         results: list[dict] = []
         actor_uuid = UUID(actor_user_id) if actor_user_id else None
+        batch_task_id = str(self.request.id)
         self.update_state(
             state="PROGRESS",
             meta={
-                "progress_percent": 0,
+                "progress_percent": 1 if active_campaign_ids else 100,
                 "current_step": (
                     f"Подготовка аудита: найдено активных кампаний {len(active_campaign_ids)}. "
                     "Собираем данные перед запуском."
@@ -136,16 +143,34 @@ def run_account_active_campaigns_full_audit_task(
         )
         campaigns_total = len(active_campaign_ids)
         for campaign_index, campaign_id in enumerate(active_campaign_ids, start=1):
-            for stage in ("L1", "L2", "L3", "AI"):
-                stage_label = _human_stage_label(stage)
+            reg = audit_task_registry.get_registered_batch_task_id(account_id)
+            if reg is not None and reg != batch_task_id:
                 self.update_state(
-                    state="PROGRESS",
+                    state="REVOKED",
                     meta={
-                        "progress_percent": int((done_steps / total_steps) * 100),
-                        "current_step": f"Кампания {campaign_index}/{campaigns_total}: {stage_label}",
+                        "progress_percent": max(1, int((done_steps / total_steps) * 100)),
+                        "current_step": "Отменено: запущен новый аудит по этому аккаунту",
                     },
                 )
-                async with AsyncSessionLocal() as session:
+                return {
+                    "account_id": account_id,
+                    "cancelled": True,
+                    "reason": "superseded",
+                    "campaigns_total": campaigns_total,
+                    "steps_total": total_steps,
+                    "steps_done": done_steps,
+                    "details": results,
+                }
+            async with AsyncSessionLocal() as session:
+                for stage in ("L1", "L2", "L3", "AI"):
+                    stage_label = _human_stage_label(stage)
+                    self.update_state(
+                        state="PROGRESS",
+                        meta={
+                            "progress_percent": max(1, int((done_steps / total_steps) * 100)),
+                            "current_step": f"Кампания {campaign_index}/{campaigns_total}: {stage_label}",
+                        },
+                    )
                     if stage == "L1":
                         result = await L1AuditService(session).run_manual_l1_audit(
                             account_id=UUID(account_id),
@@ -171,21 +196,21 @@ def run_account_active_campaigns_full_audit_task(
                             max_entities=max_entities,
                             campaign_external_id=campaign_id,
                         )
-                done_steps += 1
-                results.append(
-                    {
-                        "campaign_id": campaign_id,
-                        "stage": stage,
-                        "audit_id": str(result.audit_id),
-                    }
-                )
-                self.update_state(
-                    state="PROGRESS",
-                    meta={
-                        "progress_percent": int((done_steps / total_steps) * 100),
-                        "current_step": f"Кампания {campaign_index}/{campaigns_total}: этап завершен",
-                    },
-                )
+                    done_steps += 1
+                    results.append(
+                        {
+                            "campaign_id": campaign_id,
+                            "stage": stage,
+                            "audit_id": str(result.audit_id),
+                        }
+                    )
+                    self.update_state(
+                        state="PROGRESS",
+                        meta={
+                            "progress_percent": int((done_steps / total_steps) * 100),
+                            "current_step": f"Кампания {campaign_index}/{campaigns_total}: этап завершен",
+                        },
+                    )
             await _touch_campaign_last_audit(account_id=account_id, campaign_id=campaign_id)
         return {
             "account_id": account_id,
@@ -195,7 +220,10 @@ def run_account_active_campaigns_full_audit_task(
             "details": results,
         }
 
-    return asyncio.run(_run())
+    try:
+        return asyncio.run(_run())
+    finally:
+        audit_task_registry.clear_batch_if_current(account_id, str(self.request.id))
 
 
 @celery_app.task(name="app.workers.tasks.run_l2_audit")

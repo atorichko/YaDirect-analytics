@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entity_snapshot import EntitySnapshot, SnapshotEntityType
@@ -36,6 +36,42 @@ class EntitySnapshotRepository:
                 continue
             latest[row.entity_key] = row.normalized_snapshot or {}
         return list(latest.values())
+
+    async def list_latest_dicts_for_campaign(
+        self,
+        *,
+        account_id: UUID,
+        entity_type: SnapshotEntityType,
+        campaign_external_id: str,
+    ) -> list[dict]:
+        """Latest snapshot per entity_key, restricted to one campaign (avoids loading whole account)."""
+        cid = str(campaign_external_id)
+        et = entity_type.value
+        params = {"aid": str(account_id), "etype": et, "cid": cid}
+        if entity_type == SnapshotEntityType.campaign:
+            sql = text(
+                """
+                SELECT DISTINCT ON (entity_key) normalized_snapshot
+                FROM entity_snapshots
+                WHERE account_id = CAST(:aid AS uuid)
+                  AND entity_type = :etype
+                  AND COALESCE(normalized_snapshot->>'id', '') = :cid
+                ORDER BY entity_key, captured_at DESC
+                """
+            )
+        else:
+            sql = text(
+                """
+                SELECT DISTINCT ON (entity_key) normalized_snapshot
+                FROM entity_snapshots
+                WHERE account_id = CAST(:aid AS uuid)
+                  AND entity_type = :etype
+                  AND COALESCE(normalized_snapshot->>'campaign_id', '') = :cid
+                ORDER BY entity_key, captured_at DESC
+                """
+            )
+        result = await self._session.execute(sql, params)
+        return [m["normalized_snapshot"] or {} for m in result.mappings().all()]
 
     async def upsert_snapshot(
         self,

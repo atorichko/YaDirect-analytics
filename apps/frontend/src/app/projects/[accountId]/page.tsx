@@ -13,6 +13,10 @@ import { dnaAccountHref, dnaCampaignHref } from "@/lib/yandex-dna-links";
 
 type Finding = { campaign_external_id: string | null; created_at: string; status: string };
 
+function normalizeCampaignKey(value: string | null | undefined): string {
+  return String(value ?? "").trim().toUpperCase();
+}
+
 function campaignStatusRu(raw: string | null | undefined): string {
   const s = String(raw ?? "").trim().toUpperCase();
   if (["ON", "ACTIVE", "ENABLED"].includes(s)) return "Активна";
@@ -30,8 +34,9 @@ function reportLinkMeta(
   lastAuditMap: Record<string, string>,
   openByCampaign: Record<string, number>,
 ): { className: string; title: string } {
-  const hasAudit = Boolean(lastAuditMap[campaignId]);
-  const n = openByCampaign[campaignId] ?? 0;
+  const key = normalizeCampaignKey(campaignId);
+  const hasAudit = Boolean(lastAuditMap[key]);
+  const n = openByCampaign[key] ?? 0;
   if (!hasAudit) {
     return {
       className: "border border-muted-foreground/40 bg-muted/30 text-muted-foreground",
@@ -64,7 +69,7 @@ type CampaignAuditTaskMap = Record<string, string>;
 
 export default function ProjectPage() {
   const params = useParams<{ accountId: string }>();
-  const accountId = params.accountId;
+  const accountKey = decodeURIComponent(params.accountId);
   const token = useMemo(() => getAccessToken(), []);
 
   const [account, setAccount] = useState<AdAccount | null>(null);
@@ -91,40 +96,53 @@ export default function ProjectPage() {
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
   const loadProjectData = useCallback(async (activeToken: string): Promise<{ totalOpen: number; campaignsCount: number }> => {
-    const [accountsData, campaignsData, findingsData, autostartData, lastRunMap] = await Promise.all([
-      apiGet<AdAccount[]>("/ad-accounts", activeToken),
-      apiGet<Campaign[]>(`/ad-accounts/${accountId}/campaigns`, activeToken),
-      apiGet<Finding[]>(`/findings?account_id=${accountId}&limit=500`, activeToken),
-      apiGet<AutostartSettings>(`/audits/autostart/${accountId}`, activeToken),
-      apiGet<Record<string, string>>(`/audits/campaign-last-run/${accountId}`, activeToken),
+    const accountsData = await apiGet<AdAccount[]>("/ad-accounts", activeToken);
+    const resolvedAccount =
+      accountsData.find((a) => a.id === accountKey) ??
+      accountsData.find((a) => String(a.login ?? "").trim().toLowerCase() === accountKey.toLowerCase());
+    if (!resolvedAccount) {
+      throw new Error("PROJECT_NOT_FOUND");
+    }
+    const resolvedAccountId = resolvedAccount.id;
+    const [campaignsData, findingsData, autostartData, lastRunMap] = await Promise.all([
+      apiGet<Campaign[]>(`/ad-accounts/${resolvedAccountId}/campaigns`, activeToken),
+      apiGet<Finding[]>(`/findings?account_id=${resolvedAccountId}&limit=500`, activeToken),
+      apiGet<AutostartSettings>(`/audits/autostart/${resolvedAccountId}`, activeToken),
+      apiGet<Record<string, string>>(`/audits/campaign-last-run/${resolvedAccountId}`, activeToken),
     ]);
-    setAccount(accountsData.find((a) => a.id === accountId) ?? null);
+    setAccount(resolvedAccount);
     setCampaigns(campaignsData);
     const openCounts: Record<string, number> = {};
     for (const row of findingsData) {
       if (row.status === "fixed") continue;
       const cid = row.campaign_external_id;
       if (!cid) continue;
-      openCounts[cid] = (openCounts[cid] ?? 0) + 1;
+      const campaignKey = normalizeCampaignKey(cid);
+      if (!campaignKey) continue;
+      openCounts[campaignKey] = (openCounts[campaignKey] ?? 0) + 1;
     }
     setOpenFindingCountByCampaign(openCounts);
     const totalOpen = Object.values(openCounts).reduce((sum, value) => sum + value, 0);
     const map: Record<string, string> = {};
     for (const row of findingsData) {
       if (!row.campaign_external_id) continue;
-      if (!map[row.campaign_external_id] || new Date(row.created_at) > new Date(map[row.campaign_external_id])) {
-        map[row.campaign_external_id] = row.created_at;
+      const campaignKey = normalizeCampaignKey(row.campaign_external_id);
+      if (!campaignKey) continue;
+      if (!map[campaignKey] || new Date(row.created_at) > new Date(map[campaignKey])) {
+        map[campaignKey] = row.created_at;
       }
     }
     for (const [campaignId, lastRun] of Object.entries(lastRunMap)) {
-      if (!map[campaignId] || new Date(lastRun) > new Date(map[campaignId])) {
-        map[campaignId] = lastRun;
+      const campaignKey = normalizeCampaignKey(campaignId);
+      if (!campaignKey) continue;
+      if (!map[campaignKey] || new Date(lastRun) > new Date(map[campaignKey])) {
+        map[campaignKey] = lastRun;
       }
     }
     setLastAuditMap(map);
     setAutostart(autostartData);
     return { totalOpen, campaignsCount: campaignsData.length };
-  }, [accountId]);
+  }, [accountKey]);
 
   useEffect(() => {
     if (typeof document !== "undefined") {
@@ -149,13 +167,17 @@ export default function ProjectPage() {
         setError("Не удалось загрузить проект.");
       }
     })();
-  }, [accountId, token, loadProjectData]);
+  }, [accountKey, token, loadProjectData]);
 
   async function runCampaignAudit(campaignId: string) {
     if (!token) return;
+    if (!account?.id) {
+      setError("Не удалось определить аккаунт проекта. Обновите страницу.");
+      return;
+    }
     try {
       const row = await apiPost<JobResponse>("/audits/campaign/run-job", token, {
-        account_id: accountId,
+        account_id: account.id,
         campaign_id: campaignId,
       });
       setInfo(`Аудит кампании ${campaignId} запущен (${row.task_id}).`);
@@ -169,9 +191,13 @@ export default function ProjectPage() {
 
   async function runAllActiveCampaigns() {
     if (!token) return;
+    if (!account?.id) {
+      setError("Не удалось определить аккаунт проекта. Обновите страницу.");
+      return;
+    }
     try {
       const result = await apiPost<JobResponse>("/audits/campaigns/run-active-job", token, {
-        account_id: accountId,
+        account_id: account.id,
       });
       setInfo(`Комплексный аудит запущен (${result.task_id}).`);
       setAccountAuditTaskId(result.task_id);
@@ -194,9 +220,13 @@ export default function ProjectPage() {
 
   async function runSnapshotFallbackAudit() {
     if (!token) return;
+    if (!account?.id) {
+      setError("Не удалось определить аккаунт проекта. Обновите страницу.");
+      return;
+    }
     try {
       const result = await apiPost<JobResponse>("/audits/campaigns/run-active-job", token, {
-        account_id: accountId,
+        account_id: account.id,
       });
       setInfo(`Fallback-аудит по snapshot-данным запущен (${result.task_id}).`);
       setAccountAuditTaskId(result.task_id);
@@ -209,7 +239,11 @@ export default function ProjectPage() {
 
   async function saveAutostart() {
     if (!token) return;
-    const updated = await apiPut<AutostartSettings>(`/audits/autostart/${accountId}`, token, autostart);
+    if (!account?.id) {
+      setError("Не удалось определить аккаунт проекта. Обновите страницу.");
+      return;
+    }
+    const updated = await apiPut<AutostartSettings>(`/audits/autostart/${account.id}`, token, autostart);
     setAutostart(updated);
     setInfo("Настройки автозапуска сохранены.");
     setIsAutostartOpen(false);
@@ -217,11 +251,15 @@ export default function ProjectPage() {
 
   async function refreshCampaignsFromApi() {
     if (!token) return;
+    if (!account?.id) {
+      setError("Не удалось определить аккаунт проекта. Обновите страницу.");
+      return;
+    }
     try {
       setIsRefreshingCampaigns(true);
       setSyncWarning(null);
       setSyncStatus("Запрос отправлен в Яндекс Директ. Загружаем кампании...");
-      const result = await apiPost<{ synced_campaigns: number }>(`/ad-accounts/${accountId}/sync-campaigns`, token, {});
+      const result = await apiPost<{ synced_campaigns: number }>(`/ad-accounts/${account.id}/sync-campaigns`, token, {});
       setInfo(`Кампании обновлены из API Директа: ${result.synced_campaigns}.`);
       await loadProjectData(token);
       setSyncStatus(`Синхронизация завершена: получено кампаний ${result.synced_campaigns}.`);
@@ -491,7 +529,7 @@ export default function ProjectPage() {
                   <td className="px-3 py-2">{c.name ?? "-"}</td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">{campaignStatusRu(c.status)}</td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">
-                    {lastAuditMap[c.id] ? new Date(lastAuditMap[c.id]).toLocaleString("ru-RU") : "нет"}
+                    {lastAuditMap[normalizeCampaignKey(c.id)] ? new Date(lastAuditMap[normalizeCampaignKey(c.id)]).toLocaleString("ru-RU") : "нет"}
                     {campaignStatusMap[c.id] ? <div className="text-[11px] text-blue-700">{campaignStatusMap[c.id]}</div> : null}
                   </td>
                   <td className="px-3 py-2">
@@ -506,7 +544,7 @@ export default function ProjectPage() {
                         return (
                           <Button size="sm" variant="secondary" asChild className={meta.className}>
                             <Link
-                              href={`/projects/${accountId}/campaigns/${encodeURIComponent(c.id)}/report`}
+                              href={`/projects/${encodeURIComponent(account?.login ?? accountKey)}/campaigns/${encodeURIComponent(c.id)}/report`}
                               title={meta.title}
                             >
                               Отчёт

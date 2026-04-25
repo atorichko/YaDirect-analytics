@@ -503,7 +503,8 @@ function EvidenceBlock({
 
 export default function CampaignReportPage() {
   const params = useParams<{ accountId: string; campaignId: string }>();
-  const accountId = params.accountId;
+  const accountKey = decodeURIComponent(params.accountId);
+  const [resolvedAccountId, setResolvedAccountId] = useState<string | null>(null);
   const campaignId = decodeURIComponent(params.campaignId);
   const token = useMemo(() => getAccessToken(), []);
   const [rows, setRows] = useState<Finding[]>([]);
@@ -532,16 +533,26 @@ export default function CampaignReportPage() {
   }, [campaignId, campaignName]);
 
   async function loadReport(activeToken: string) {
-    const [findings, campaigns, activeCatalog, accounts] = await Promise.all([
-      apiGet<Finding[]>(`/findings?account_id=${accountId}&campaign_id=${encodeURIComponent(campaignId)}&limit=500`, activeToken),
+    const accounts = await apiGet<AdAccountRow[]>("/ad-accounts", activeToken);
+    const resolvedAccount =
+      accounts.find((a) => a.id === accountKey) ??
+      accounts.find((a) => String(a.login ?? "").trim().toLowerCase() === accountKey.toLowerCase());
+    if (!resolvedAccount) {
+      throw new Error("PROJECT_NOT_FOUND");
+    }
+    const accountId = resolvedAccount.id;
+    setResolvedAccountId(accountId);
+    const [findings, campaigns, activeCatalog] = await Promise.all([
+      apiGet<Finding[]>(
+        `/findings?account_id=${accountId}&campaign_id=${encodeURIComponent(campaignId)}&limit=500`,
+        activeToken,
+      ),
       apiGet<Campaign[]>(`/ad-accounts/${accountId}/campaigns`, activeToken),
       apiGet<ActiveCatalogResponse>("/rule-catalogs/active", activeToken),
-      apiGet<AdAccountRow[]>("/ad-accounts", activeToken),
     ]);
     setRows(findings);
     setCampaignName(campaigns.find((x) => x.id === campaignId)?.name ?? null);
-    const acc = accounts.find((a) => a.id === accountId);
-    setYandexClientLogin(acc?.login?.trim() ? acc.login.trim() : null);
+    setYandexClientLogin(resolvedAccount.login?.trim() ? resolvedAccount.login.trim() : null);
     const recMap: Record<string, string> = {};
     for (const rule of activeCatalog.rules ?? []) {
       const text = String(rule.fix_recommendation ?? "").trim();
@@ -560,7 +571,7 @@ export default function CampaignReportPage() {
         setError("Не удалось загрузить отчет кампании.");
       }
     })();
-  }, [accountId, campaignId, token]);
+  }, [accountKey, campaignId, token]);
 
   const latestRows = useMemo(() => {
     const byKey = new Map<string, Finding>();
@@ -627,11 +638,15 @@ export default function CampaignReportPage() {
 
   async function runCampaignAudit() {
     if (!token) return;
+    if (!resolvedAccountId) {
+      setError("Не удалось определить аккаунт проекта. Обновите страницу.");
+      return;
+    }
     try {
       setError(null);
       setAuditRunning(true);
       const result = await apiPost<JobResponse>("/audits/campaign/run-job", token, {
-        account_id: accountId,
+        account_id: resolvedAccountId,
         campaign_id: campaignId,
       });
       setInfo(`Аудит кампании запущен (${result.task_id}).`);
@@ -682,7 +697,7 @@ export default function CampaignReportPage() {
               Аккаунты
             </Link>{" "}
             /{" "}
-            <Link href={`/projects/${accountId}`} className="hover:underline">
+            <Link href={`/projects/${encodeURIComponent(effectiveYandexLogin ?? accountKey)}`} className="hover:underline">
               Проект
             </Link>{" "}
             / <span>Отчет кампании</span>
@@ -737,7 +752,7 @@ export default function CampaignReportPage() {
           <Link href="/dashboard">Аккаунты</Link>
         </Button>
         <Button variant="secondary" size="sm" asChild>
-          <Link href={`/projects/${accountId}`}>Кампании проекта</Link>
+          <Link href={`/projects/${encodeURIComponent(effectiveYandexLogin ?? accountKey)}`}>Кампании проекта</Link>
         </Button>
         <Button variant="default" size="sm" type="button" disabled>
           Отчёт кампании

@@ -127,12 +127,12 @@ export default function DashboardPage() {
               {accounts.map((acc) => (
                 <tr key={acc.id} className="border-t">
                   <td className="px-3 py-2">
-                    <Link className="underline underline-offset-2" href={`/projects/${acc.id}`}>
+                    <Link className="underline underline-offset-2" href={`/projects/${encodeURIComponent(acc.login)}`}>
                       {acc.login}
                     </Link>
                   </td>
                   <td className="px-3 py-2">
-                    <Link className="underline underline-offset-2" href={`/projects/${acc.id}`}>
+                    <Link className="underline underline-offset-2" href={`/projects/${encodeURIComponent(acc.login)}`}>
                       {acc.name}
                     </Link>
                   </td>

@@ -1229,17 +1229,34 @@ def _missing_required_extensions(ctx: L1Context, rule: dict[str, Any]) -> list[F
     required = [str(x) for x in (rule.get("required_extensions") or []) if str(x)]
     if not required:
         required = ["sitelinks", "callouts", "display_url", "contact_info", "image"]
+    ext_by_ad: dict[str, dict[str, Any]] = {}
+    for ext in ctx.extensions:
+        ad_id = str(ext.get("ad_id") or "").strip()
+        if ad_id:
+            ext_by_ad[ad_id] = ext
     out: list[FindingDraft] = []
     for ad in ctx.ads:
         if not _is_structurally_enabled_yandex_ad(ad):
             continue
+        ad_id = str(ad.get("id") or "").strip()
+        ext = ext_by_ad.get(ad_id, {})
         missing: list[str] = []
+        observed_fields = 0
         for key in required:
             value = ad.get(key)
+            if value in (None, "", {}) and key in ext:
+                value = ext.get(key)
+            # If field is absent in both ad snapshot and extension snapshot, we cannot
+            # reliably assert missing extension for this key.
+            if key not in ad and key not in ext:
+                continue
+            observed_fields += 1
             if isinstance(value, list) and len(value) == 0:
                 missing.append(key)
             elif value in (None, "", {}):
                 missing.append(key)
+        if observed_fields == 0:
+            continue
         if not missing:
             continue
         out.append(

@@ -145,23 +145,36 @@ class L3AuditService:
         )
 
     async def _build_context(self, account_id: UUID, *, campaign_external_id: str | None = None) -> L3Context:
-        ads = self._latest_snapshots_as_dicts(
-            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad)
-        )
-        extensions = self._latest_snapshots_as_dicts(
-            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.extension)
-        )
-        campaigns = self._latest_snapshots_as_dicts(
-            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.campaign)
-        )
-        groups = self._latest_snapshots_as_dicts(
-            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad_group)
-        )
-        if campaign_external_id:
-            ads = [item for item in ads if str(item.get("campaign_id")) == campaign_external_id]
-            extensions = [item for item in extensions if str(item.get("campaign_id")) == campaign_external_id]
-            campaigns = [item for item in campaigns if str(item.get("id")) == campaign_external_id]
-            groups = [item for item in groups if str(item.get("campaign_id")) == campaign_external_id]
+        scoped: str | None = None
+        if campaign_external_id is not None:
+            s = str(campaign_external_id).strip()
+            scoped = s or None
+        if scoped:
+            ads = await self._snapshots.list_latest_dicts_for_campaign(
+                account_id=account_id, entity_type=SnapshotEntityType.ad, campaign_external_id=scoped
+            )
+            extensions = await self._snapshots.list_latest_dicts_for_campaign(
+                account_id=account_id, entity_type=SnapshotEntityType.extension, campaign_external_id=scoped
+            )
+            campaigns = await self._snapshots.list_latest_dicts_for_campaign(
+                account_id=account_id, entity_type=SnapshotEntityType.campaign, campaign_external_id=scoped
+            )
+            groups = await self._snapshots.list_latest_dicts_for_campaign(
+                account_id=account_id, entity_type=SnapshotEntityType.ad_group, campaign_external_id=scoped
+            )
+        else:
+            ads = self._latest_snapshots_as_dicts(
+                await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad)
+            )
+            extensions = self._latest_snapshots_as_dicts(
+                await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.extension)
+            )
+            campaigns = self._latest_snapshots_as_dicts(
+                await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.campaign)
+            )
+            groups = self._latest_snapshots_as_dicts(
+                await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad_group)
+            )
         ads = [item for item in ads if _is_active_state(item.get("state") or item.get("status"))]
         return L3Context(
             account_id=str(account_id),

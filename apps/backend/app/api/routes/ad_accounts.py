@@ -341,7 +341,7 @@ async def oauth_callback(
     )
     await session.commit()
     ui_redirect = str(payload.get("ui_redirect") or settings.yandex_oauth_ui_return_url())
-    project_redirect = _to_project_redirect(ui_redirect=ui_redirect, account_id=str(account.id))
+    project_redirect = _to_project_redirect(ui_redirect=ui_redirect, account_key=account.login)
     sep = "&" if "?" in project_redirect else "?"
     return RedirectResponse(
         url=f"{project_redirect}{sep}oauth=success&account_id={account.id}&login={quote_plus(account.login)}",
@@ -490,6 +490,12 @@ async def sync_account_campaigns(
         if not ad_id:
             continue
         text_ad = item.get("TextAd") if isinstance(item.get("TextAd"), dict) else {}
+        display_url = text_ad.get("DisplayUrlPath") or text_ad.get("DisplayUrlPath2")
+        sitelink_set_id = text_ad.get("SitelinkSetId")
+        callout_setting_id = text_ad.get("CalloutSettingId")
+        vcard_id = text_ad.get("VCardId")
+        business_id = text_ad.get("BusinessId")
+        ad_image_hash = text_ad.get("AdImageHash") or text_ad.get("ImageHash")
         normalized = {
             "id": ad_id,
             "campaign_id": str(item.get("CampaignId") or ""),
@@ -501,6 +507,14 @@ async def sync_account_campaigns(
             "text": text_ad.get("Text"),
             "url": text_ad.get("Href"),
             "final_url": text_ad.get("Href"),
+            # Extension presence markers from Ads API (set ids / hashes).
+            "sitelinks": [f"set:{sitelink_set_id}"] if sitelink_set_id else [],
+            "callouts": [f"set:{callout_setting_id}"] if callout_setting_id else [],
+            "display_url": display_url,
+            "contact_info": (
+                {"vcard_id": str(vcard_id)} if vcard_id is not None else {"business_id": str(business_id)} if business_id is not None else None
+            ),
+            "image": {"image_hash": str(ad_image_hash)} if ad_image_hash is not None else None,
         }
         content_hash = hashlib.sha256(
             json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -918,25 +932,51 @@ async def _fetch_direct_ads(*, access_token: str, client_login: str, campaign_id
     async with httpx.AsyncClient(timeout=25) as client:
         for i in range(0, len(campaign_ids), 10):
             chunk = campaign_ids[i : i + 10]
-            body = {
-                "method": "get",
-                "params": {
-                    "SelectionCriteria": {"CampaignIds": chunk},
-                    "FieldNames": ["Id", "CampaignId", "AdGroupId", "State", "Status", "Type"],
-                    "TextAdFieldNames": ["Title", "Title2", "Text", "Href", "Mobile"],
-                },
-            }
-            resp = await _post_with_retry(
-                client=client,
-                url=settings.yandex_direct_api_url.rstrip("/") + "/ads",
-                headers=headers,
-                json=body,
-            )
-            if resp.status_code >= 400:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Yandex Direct ads failed: {resp.status_code} {resp.text}")
-            payload = resp.json()
+            payload: dict[str, Any] | None = None
+            for text_fields in (
+                [
+                    "Title",
+                    "Title2",
+                    "Text",
+                    "Href",
+                    "Mobile",
+                    "DisplayUrlPath",
+                    "SitelinkSetId",
+                    "CalloutSettingId",
+                    "VCardId",
+                    "BusinessId",
+                    "AdImageHash",
+                ],
+                ["Title", "Title2", "Text", "Href", "Mobile"],
+            ):
+                body = {
+                    "method": "get",
+                    "params": {
+                        "SelectionCriteria": {"CampaignIds": chunk},
+                        "FieldNames": ["Id", "CampaignId", "AdGroupId", "State", "Status", "Type"],
+                        "TextAdFieldNames": text_fields,
+                    },
+                }
+                resp = await _post_with_retry(
+                    client=client,
+                    url=settings.yandex_direct_api_url.rstrip("/") + "/ads",
+                    headers=headers,
+                    json=body,
+                )
+                if resp.status_code >= 400:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Yandex Direct ads failed: {resp.status_code} {resp.text}")
+                payload = resp.json()
+                if "error" not in payload:
+                    break
+                error = payload["error"]
+                detail = str(error.get("error_detail") or "")
+                if error.get("error_code") == 8000 and "неверное значение перечисления" in detail.lower():
+                    continue
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Yandex Direct error: {error}")
+            if payload is None:
+                continue
             if "error" in payload:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Yandex Direct error: {payload['error']}")
+                continue
             rows.extend(payload.get("result", {}).get("Ads", []))
     return rows
 
@@ -979,15 +1019,15 @@ async def _fetch_direct_keywords(*, access_token: str, client_login: str, campai
     return rows
 
 
-def _to_project_redirect(*, ui_redirect: str, account_id: str) -> str:
+def _to_project_redirect(*, ui_redirect: str, account_key: str) -> str:
     parsed = urlsplit(ui_redirect)
     path = parsed.path
     if "/settings" in path:
-        path = path.replace("/settings", f"/projects/{account_id}")
+        path = path.replace("/settings", f"/projects/{quote_plus(account_key)}")
     elif path.rstrip("/").endswith("/dashboard"):
-        path = path.rstrip("/") + f"/projects/{account_id}"
+        path = path.rstrip("/") + f"/projects/{quote_plus(account_key)}"
     else:
-        path = path.rstrip("/") + f"/projects/{account_id}"
+        path = path.rstrip("/") + f"/projects/{quote_plus(account_key)}"
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
 

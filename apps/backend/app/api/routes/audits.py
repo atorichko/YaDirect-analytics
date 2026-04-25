@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Annotated
@@ -31,6 +32,13 @@ from app.services.l1_audit_service import L1AuditService
 from app.services.l2_audit_service import L2AuditService
 from app.services.l3_audit_service import L3AuditService
 from app.workers.celery_app import celery_app
+from app.services.audit_task_registry import (
+    exclusive_audit_mutations,
+    register_batch,
+    register_campaign,
+    revoke_for_new_batch,
+    revoke_for_new_campaign_audit,
+)
 from app.workers.tasks import (
     run_ai_audit_task,
     run_account_active_campaigns_full_audit_task,
@@ -167,7 +175,24 @@ async def get_job_status(task_id: str, _user: CurrentUser) -> JobStatusResponse:
 
 @router.post("/campaign/run-job", response_model=QueueAuditJobResponse, status_code=status.HTTP_202_ACCEPTED)
 async def run_campaign_audit_job(body: QueueCampaignAuditJobRequest, user: CurrentUser) -> QueueAuditJobResponse:
-    task = run_campaign_full_audit_task.delay(str(body.account_id), body.campaign_id, str(user.id), body.max_entities)
+    aid = str(body.account_id)
+
+    def _enqueue() -> object:
+        with exclusive_audit_mutations(aid):
+            revoke_for_new_campaign_audit(aid, body.campaign_id)
+            t = run_campaign_full_audit_task.delay(
+                aid, body.campaign_id, str(user.id), body.max_entities
+            )
+            register_campaign(aid, body.campaign_id, t.id)
+            return t
+
+    try:
+        task = await asyncio.to_thread(_enqueue)
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Не удалось получить блокировку аудита для аккаунта. Повторите через несколько секунд.",
+        ) from exc
     return QueueAuditJobResponse(task_id=task.id, task_name="run_campaign_full_audit", status="queued")
 
 
@@ -176,7 +201,22 @@ async def run_active_campaigns_audit_job(
     body: QueueCampaignBatchAuditJobRequest,
     user: CurrentUser,
 ) -> QueueAuditJobResponse:
-    task = run_account_active_campaigns_full_audit_task.delay(str(body.account_id), str(user.id), body.max_entities)
+    aid = str(body.account_id)
+
+    def _enqueue() -> object:
+        with exclusive_audit_mutations(aid):
+            revoke_for_new_batch(aid)
+            t = run_account_active_campaigns_full_audit_task.delay(aid, str(user.id), body.max_entities)
+            register_batch(aid, t.id)
+            return t
+
+    try:
+        task = await asyncio.to_thread(_enqueue)
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Не удалось получить блокировку аудита для аккаунта. Повторите через несколько секунд.",
+        ) from exc
     return QueueAuditJobResponse(task_id=task.id, task_name="run_account_active_campaigns_full_audit", status="queued")
 
 

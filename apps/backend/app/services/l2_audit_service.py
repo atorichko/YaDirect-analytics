@@ -140,11 +140,18 @@ class L2AuditService:
         )
 
     async def _build_context(self, account_id: UUID, *, campaign_external_id: str | None = None) -> L2Context:
-        campaigns = self._latest_snapshots_as_dicts(
-            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.campaign)
-        )
-        if campaign_external_id:
-            campaigns = [item for item in campaigns if str(item.get("id")) == campaign_external_id]
+        scoped: str | None = None
+        if campaign_external_id is not None:
+            s = str(campaign_external_id).strip()
+            scoped = s or None
+        if scoped:
+            campaigns = await self._snapshots.list_latest_dicts_for_campaign(
+                account_id=account_id, entity_type=SnapshotEntityType.campaign, campaign_external_id=scoped
+            )
+        else:
+            campaigns = self._latest_snapshots_as_dicts(
+                await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.campaign)
+            )
         metrika_goals: list[dict] = []
         account_rows = await self._snapshots.list_by_account_and_type(
             account_id=account_id, entity_type=SnapshotEntityType.account

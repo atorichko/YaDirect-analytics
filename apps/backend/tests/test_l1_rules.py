@@ -145,6 +145,63 @@ def test_duplicate_keywords_in_group_rule() -> None:
     assert any(c.get("keyword_id") == "k3" and "москва" in (c.get("minus_tokens") or []) for c in conflicts)
 
 
+def test_missing_required_extensions_skips_when_extension_fields_not_loaded() -> None:
+    rule = build_l1_rule_registry()["MISSING_REQUIRED_EXTENSIONS"]
+    ctx = L1Context(
+        account_id="acc1",
+        campaigns=[{"id": "c1", "status": "active"}],
+        groups=[{"id": "g1", "campaign_id": "c1", "status": "active"}],
+        ads=[
+            {
+                "id": "a1",
+                "campaign_id": "c1",
+                "ad_group_id": "g1",
+                "state": "on",
+                "status": "active",
+                # no sitelinks/callouts/display_url/contact_info/image keys loaded
+            }
+        ],
+        keywords=[],
+        extensions=[],
+    )
+    findings = rule(ctx, {})
+    assert findings == []
+
+
+def test_missing_required_extensions_uses_extension_snapshot_fallback() -> None:
+    rule = build_l1_rule_registry()["MISSING_REQUIRED_EXTENSIONS"]
+    ctx = L1Context(
+        account_id="acc1",
+        campaigns=[{"id": "c1", "status": "active"}],
+        groups=[{"id": "g1", "campaign_id": "c1", "status": "active"}],
+        ads=[
+            {
+                "id": "a1",
+                "campaign_id": "c1",
+                "ad_group_id": "g1",
+                "state": "on",
+                "status": "active",
+            }
+        ],
+        keywords=[],
+        extensions=[
+            {
+                "ad_id": "a1",
+                "campaign_id": "c1",
+                "ad_group_id": "g1",
+                "sitelinks": [],
+                "callouts": ["24/7"],
+                "display_url": "example.com",
+                "contact_info": {"phone": "+70000000000"},
+                "image": {"hash": "abc"},
+            }
+        ],
+    )
+    findings = rule(ctx, {})
+    assert len(findings) == 1
+    assert findings[0].evidence.get("missing_extensions") == ["sitelinks"]
+
+
 def test_expired_date_in_extensions_yandex_fixture_sitelink() -> None:
     data = load_fixture_dict()
     extensions = l1_extensions_from_fixture(data)

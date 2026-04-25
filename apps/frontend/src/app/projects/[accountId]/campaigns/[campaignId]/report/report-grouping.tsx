@@ -28,6 +28,14 @@ const RULE_ACTIVE_CAMPAIGN_WITHOUT_ACTIVE_GROUPS = "ACTIVE_CAMPAIGN_WITHOUT_ACTI
 
 type HighlightSeg = { text?: string; ok?: boolean };
 
+const EXTENSION_NAME_RU: Record<string, string> = {
+  sitelinks: "быстрые ссылки",
+  callouts: "уточнения",
+  display_url: "отображаемая ссылка",
+  contact_info: "контактная информация",
+  image: "изображение",
+};
+
 function SegmentInline({ segments }: { segments: HighlightSeg[] }) {
   if (!segments.length) return null;
   return (
@@ -1356,7 +1364,8 @@ export function GroupedDetailsSection({
         <ul className="mt-1 space-y-2 text-sm text-foreground">
           {sorted.map((item) => {
             const ev = item.evidence ?? {};
-            const missing = (ev.missing_extensions as string[] | undefined) ?? [];
+            const missingRaw = (ev.missing_extensions as string[] | undefined) ?? [];
+            const missing = missingRaw.map((key) => EXTENSION_NAME_RU[key] ?? key);
             const adId = String(item.ad_external_id ?? ev.ad_id ?? "").trim();
             const cid = String(item.campaign_external_id ?? ev.campaign_id ?? pageCampaignId ?? "").trim();
             const gid = String(item.group_external_id ?? ev.group_id ?? "").trim();

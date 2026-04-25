@@ -216,24 +216,36 @@ class AIAuditService:
         campaign_external_id: str | None = None,
     ) -> dict:
         """Сжатый снимок аккаунта для AI-правил уровня кампаний/семантики/UTM."""
-        campaigns = self._latest_snapshots_as_dicts(
-            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.campaign)
-        )
-        groups = self._latest_snapshots_as_dicts(
-            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad_group)
-        )
-        keywords = self._latest_snapshots_as_dicts(
-            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.keyword)
-        )
-        ads = self._latest_snapshots_as_dicts(
-            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad)
-        )
-        if campaign_external_id:
-            cid = str(campaign_external_id)
-            campaigns = [c for c in campaigns if str(c.get("id")) == cid]
-            groups = [g for g in groups if str(g.get("campaign_id")) == cid]
-            keywords = [k for k in keywords if str(k.get("campaign_id")) == cid]
-            ads = [a for a in ads if str(a.get("campaign_id")) == cid]
+        scoped: str | None = None
+        if campaign_external_id is not None:
+            s = str(campaign_external_id).strip()
+            scoped = s or None
+        if scoped:
+            campaigns = await self._snapshots.list_latest_dicts_for_campaign(
+                account_id=account_id, entity_type=SnapshotEntityType.campaign, campaign_external_id=scoped
+            )
+            groups = await self._snapshots.list_latest_dicts_for_campaign(
+                account_id=account_id, entity_type=SnapshotEntityType.ad_group, campaign_external_id=scoped
+            )
+            keywords = await self._snapshots.list_latest_dicts_for_campaign(
+                account_id=account_id, entity_type=SnapshotEntityType.keyword, campaign_external_id=scoped
+            )
+            ads = await self._snapshots.list_latest_dicts_for_campaign(
+                account_id=account_id, entity_type=SnapshotEntityType.ad, campaign_external_id=scoped
+            )
+        else:
+            campaigns = self._latest_snapshots_as_dicts(
+                await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.campaign)
+            )
+            groups = self._latest_snapshots_as_dicts(
+                await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad_group)
+            )
+            keywords = self._latest_snapshots_as_dicts(
+                await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.keyword)
+            )
+            ads = self._latest_snapshots_as_dicts(
+                await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad)
+            )
         return {
             "account_id": str(account_id),
             "campaigns": campaigns[:80],
@@ -249,12 +261,22 @@ class AIAuditService:
         max_entities: int,
         campaign_external_id: str | None = None,
     ) -> list[dict]:
-        ad_snapshots = await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad)
-        latest = [item for item in self._latest_snapshots_as_dicts(ad_snapshots) if _is_active_state(item.get("state") or item.get("status"))][
+        scoped: str | None = None
+        if campaign_external_id is not None:
+            s = str(campaign_external_id).strip()
+            scoped = s or None
+        if scoped:
+            ad_dicts = await self._snapshots.list_latest_dicts_for_campaign(
+                account_id=account_id, entity_type=SnapshotEntityType.ad, campaign_external_id=scoped
+            )
+        else:
+            ad_snapshots = await self._snapshots.list_by_account_and_type(
+                account_id=account_id, entity_type=SnapshotEntityType.ad
+            )
+            ad_dicts = self._latest_snapshots_as_dicts(ad_snapshots)
+        latest = [item for item in ad_dicts if _is_active_state(item.get("state") or item.get("status"))][
             :max_entities
         ]
-        if campaign_external_id:
-            latest = [item for item in latest if str(item.get("campaign_id")) == campaign_external_id][:max_entities]
         entities: list[dict] = []
         for ad in latest:
             ad_id = str(ad.get("id"))

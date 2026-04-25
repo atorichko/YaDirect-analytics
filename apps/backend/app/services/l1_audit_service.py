@@ -144,21 +144,43 @@ class L1AuditService:
         )
 
     async def _build_context(self, account_id: UUID, *, campaign_external_id: str | None = None) -> L1Context:
-        campaigns_all = self._latest_snapshots_as_dicts(
-            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.campaign)
-        )
-        groups_all = self._latest_snapshots_as_dicts(
-            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad_group)
-        )
-        ads_all = self._latest_snapshots_as_dicts(
-            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad)
-        )
-        keywords_all = self._latest_snapshots_as_dicts(
-            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.keyword)
-        )
-        extensions_all = self._latest_snapshots_as_dicts(
-            await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.extension)
-        )
+        scoped: str | None = None
+        if campaign_external_id is not None:
+            s = str(campaign_external_id).strip()
+            scoped = s or None
+
+        if scoped:
+            campaigns_all = await self._snapshots.list_latest_dicts_for_campaign(
+                account_id=account_id, entity_type=SnapshotEntityType.campaign, campaign_external_id=scoped
+            )
+            groups_all = await self._snapshots.list_latest_dicts_for_campaign(
+                account_id=account_id, entity_type=SnapshotEntityType.ad_group, campaign_external_id=scoped
+            )
+            ads_all = await self._snapshots.list_latest_dicts_for_campaign(
+                account_id=account_id, entity_type=SnapshotEntityType.ad, campaign_external_id=scoped
+            )
+            keywords_all = await self._snapshots.list_latest_dicts_for_campaign(
+                account_id=account_id, entity_type=SnapshotEntityType.keyword, campaign_external_id=scoped
+            )
+            extensions_all = await self._snapshots.list_latest_dicts_for_campaign(
+                account_id=account_id, entity_type=SnapshotEntityType.extension, campaign_external_id=scoped
+            )
+        else:
+            campaigns_all = self._latest_snapshots_as_dicts(
+                await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.campaign)
+            )
+            groups_all = self._latest_snapshots_as_dicts(
+                await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad_group)
+            )
+            ads_all = self._latest_snapshots_as_dicts(
+                await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.ad)
+            )
+            keywords_all = self._latest_snapshots_as_dicts(
+                await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.keyword)
+            )
+            extensions_all = self._latest_snapshots_as_dicts(
+                await self._snapshots.list_by_account_and_type(account_id=account_id, entity_type=SnapshotEntityType.extension)
+            )
 
         groups_all = [
             item
@@ -182,17 +204,10 @@ class L1AuditService:
         account_campaigns: list[dict] | None = None
         account_keywords: list[dict] | None = None
         account_groups: list[dict] | None = None
-        scoped: str | None = None
-        if campaign_external_id:
-            scoped = campaign_external_id
+        if scoped:
             account_campaigns = campaigns_for_competition
             account_keywords = keywords_for_competition
             account_groups = groups_all
-            campaigns = [item for item in campaigns if str(item.get("id")) == campaign_external_id]
-            groups = [item for item in groups if str(item.get("campaign_id")) == campaign_external_id]
-            ads = [item for item in ads if str(item.get("campaign_id")) == campaign_external_id]
-            keywords = [item for item in keywords if str(item.get("campaign_id")) == campaign_external_id]
-            extensions = [item for item in extensions if str(item.get("campaign_id")) == campaign_external_id]
 
         active_group_ids = {str(item.get("id")) for item in groups if item.get("id") is not None}
         ads = [
