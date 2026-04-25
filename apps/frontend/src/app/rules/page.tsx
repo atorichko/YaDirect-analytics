@@ -75,6 +75,12 @@ export default function RulesPage() {
   const token = useMemo(() => getAccessToken(), []);
   const catalogFingerprintRef = useRef<string | null>(null);
 
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.title = "Правила аудита | Модуль аудита Яндекс Директ";
+    }
+  }, []);
+
   const loadCatalog = useCallback(async (activeToken: string) => {
     const data = await apiGet<ActiveCatalog>("/rule-catalogs/active", activeToken);
     setCatalog(data);

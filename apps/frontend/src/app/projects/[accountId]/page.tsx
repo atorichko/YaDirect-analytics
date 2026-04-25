@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import type { AdAccount, Campaign, JobResponse } from "@/features/dashboard/types";
 import { apiGet, apiPost, apiPut } from "@/lib/api-client";
 import { getAccessToken } from "@/lib/auth";
+import { dnaAccountHref, dnaCampaignHref } from "@/lib/yandex-dna-links";
 
 type Finding = { campaign_external_id: string | null; created_at: string; status: string };
 
@@ -348,7 +349,19 @@ export default function ProjectPage() {
             / <span>Проект</span>
           </p>
           <h1 className="text-2xl font-semibold tracking-tight">Проект: {account?.name ?? "-"}</h1>
-          {account ? <p className="text-sm text-muted-foreground">аккаунт в Директ: {account.login}</p> : null}
+          {account ? (
+            <p className="text-sm text-muted-foreground">
+              аккаунт в Директ:{" "}
+              <a
+                className="text-blue-700 underline underline-offset-2"
+                href={dnaAccountHref(account.login)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {account.login}
+              </a>
+            </p>
+          ) : null}
         </div>
         <AppSectionNav />
       </div>
@@ -461,7 +474,20 @@ export default function ProjectPage() {
             <tbody>
               {visibleCampaigns.map((c) => (
                 <tr key={c.id} className="border-t">
-                  <td className="px-3 py-2">{c.id}</td>
+                  <td className="px-3 py-2">
+                    {account?.login && /^\d+$/.test(String(c.id)) ? (
+                      <a
+                        className="text-blue-700 underline underline-offset-2"
+                        href={dnaCampaignHref(account.login, String(c.id))}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {c.id}
+                      </a>
+                    ) : (
+                      c.id
+                    )}
+                  </td>
                   <td className="px-3 py-2">{c.name ?? "-"}</td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">{campaignStatusRu(c.status)}</td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">

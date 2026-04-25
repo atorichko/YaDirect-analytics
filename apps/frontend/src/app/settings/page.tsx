@@ -29,6 +29,22 @@ type PromptSettings = {
   prompt: string;
 };
 
+type AdAccountItem = {
+  id: string;
+  name: string;
+  login: string;
+};
+
+type DirectApiUnits = {
+  account_id: string;
+  account_login: string;
+  spent: number | null;
+  remaining: number | null;
+  daily_limit: number | null;
+  units_used_login: string | null;
+  units_header_raw: string | null;
+};
+
 type CoverageResponse = {
   catalog_version: string;
   catalog_updated_at?: string;
@@ -47,6 +63,9 @@ export default function SettingsPage() {
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
+  const [adAccounts, setAdAccounts] = useState<AdAccountItem[]>([]);
+  const [unitsByAccountId, setUnitsByAccountId] = useState<Record<string, DirectApiUnits>>({});
+  const [unitsLoading, setUnitsLoading] = useState(false);
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -78,12 +97,14 @@ export default function SettingsPage() {
           return;
         }
         setMe(meData);
-        const [usersData, promptData] = await Promise.all([
+        const [usersData, promptData, adAccountsData] = await Promise.all([
           apiGet<UserItem[]>("/users", token),
           apiGet<PromptSettings>("/settings/ai-prompt", token),
+          apiGet<AdAccountItem[]>("/ad-accounts", token),
         ]);
         setUsers(usersData);
         setPrompt(promptData.prompt);
+        setAdAccounts(adAccountsData);
         try {
           const coverageData = await apiGet<CoverageResponse>("/rule-catalogs/active/coverage", token);
           setCoverage(coverageData);
@@ -95,6 +116,41 @@ export default function SettingsPage() {
       }
     })();
   }, [token]);
+
+  async function refreshDirectApiUnits() {
+    if (!token) return;
+    setUnitsLoading(true);
+    setError(null);
+    try {
+      const rows = await Promise.all(
+        adAccounts.map(async (account) => {
+          try {
+            const units = await apiGet<DirectApiUnits>(`/ad-accounts/${account.id}/direct-api-units`, token);
+            return [account.id, units] as const;
+          } catch {
+            return [
+              account.id,
+              {
+                account_id: account.id,
+                account_login: account.login,
+                spent: null,
+                remaining: null,
+                daily_limit: null,
+                units_used_login: null,
+                units_header_raw: null,
+              } as DirectApiUnits,
+            ] as const;
+          }
+        }),
+      );
+      setUnitsByAccountId(Object.fromEntries(rows));
+      setInfo("API-баллы Яндекс Директ обновлены.");
+    } catch {
+      setError("Не удалось обновить API-баллы Яндекс Директ.");
+    } finally {
+      setUnitsLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -384,6 +440,56 @@ export default function SettingsPage() {
             }
           }}
         />
+      </section>
+
+      <section className="rounded border p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-medium">API-баллы Яндекс Директ</h2>
+          <Button onClick={() => void refreshDirectApiUnits()} disabled={unitsLoading || adAccounts.length === 0}>
+            {unitsLoading ? "Обновляем..." : "Обновить API-баллы"}
+          </Button>
+        </div>
+        <p className="mb-3 text-sm text-muted-foreground">
+          Баллы берутся из HTTP-заголовка <code className="rounded bg-muted px-1">Units</code> ответа Direct API в формате{" "}
+          <code className="rounded bg-muted px-1">spent/remaining/daily_limit</code>.
+        </p>
+        <div className="overflow-x-auto rounded border">
+          <table className="min-w-full text-sm">
+            <thead className="bg-muted">
+              <tr>
+                <th className="px-3 py-2 text-left">Аккаунт</th>
+                <th className="px-3 py-2 text-left">Потрачено</th>
+                <th className="px-3 py-2 text-left">Осталось</th>
+                <th className="px-3 py-2 text-left">Лимит/день</th>
+                <th className="px-3 py-2 text-left">Списано с логина</th>
+              </tr>
+            </thead>
+            <tbody>
+              {adAccounts.map((account) => {
+                const units = unitsByAccountId[account.id];
+                return (
+                  <tr key={account.id} className="border-t">
+                    <td className="px-3 py-2">
+                      <div className="font-medium">{account.name}</div>
+                      <div className="text-xs text-muted-foreground">{account.login}</div>
+                    </td>
+                    <td className="px-3 py-2">{units?.spent ?? "—"}</td>
+                    <td className="px-3 py-2">{units?.remaining ?? "—"}</td>
+                    <td className="px-3 py-2">{units?.daily_limit ?? "—"}</td>
+                    <td className="px-3 py-2">{units?.units_used_login ?? "—"}</td>
+                  </tr>
+                );
+              })}
+              {adAccounts.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-4 text-muted-foreground" colSpan={5}>
+                    Подключенных аккаунтов нет.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="rounded border p-4">

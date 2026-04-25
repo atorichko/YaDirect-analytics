@@ -181,6 +181,213 @@ def _keyword_positive_tokens(text: str) -> set[str]:
     return out
 
 
+# Служебные слова не участвуют в пересечении для DUPLICATE_KEYWORDS_WITH_OVERLAP (целиком по токену).
+_RU_FUNCTION_WORDS: frozenset[str] = frozenset(
+    {
+        "в",
+        "во",
+        "на",
+        "по",
+        "из",
+        "от",
+        "до",
+        "за",
+        "к",
+        "ко",
+        "у",
+        "с",
+        "со",
+        "о",
+        "об",
+        "обо",
+        "при",
+        "про",
+        "для",
+        "без",
+        "над",
+        "под",
+        "через",
+        "между",
+        "и",
+        "да",
+        "или",
+        "ли",
+        "бы",
+        "же",
+        "аль",
+        "ни",
+        "не",
+        "уж",
+        "то",
+        "те",
+        "та",
+        "тот",
+        "что",
+        "чтобы",
+        "это",
+        "лишь",
+    }
+)
+
+_YEAR_LEXEMES: frozenset[str] = frozenset(
+    {"год", "года", "году", "годам", "годах", "годы", "лет", "годом", "годами"}
+)
+
+
+def _is_four_digit_calendar_year_token(t: str) -> bool:
+    return bool(t.isdigit() and len(t) == 4 and 1990 <= int(t) <= 2099)
+
+
+def _is_year_lexeme_token(t: str) -> bool:
+    """Словесное обозначение года (год/году/…); не смешиваем с токенами «2026»."""
+    if t in _YEAR_LEXEMES:
+        return True
+    return _ru_approx_morph_base(t) in _YEAR_LEXEMES
+
+
+def _year_lexeme_and_digit_year_incompatible(minus: str, positive: str) -> bool:
+    """Минус «год» не перекрывает «2026» и наоборот — разные сущности для аудита."""
+    m_d, p_d = _is_four_digit_calendar_year_token(minus), _is_four_digit_calendar_year_token(positive)
+    m_l, p_l = _is_year_lexeme_token(minus), _is_year_lexeme_token(positive)
+    return (m_d and p_l) or (m_l and p_d)
+
+# Длинные окончания первыми (грубая нормализация словоформ для сопоставления с минус-словами).
+_RU_INFLECTION_ENDINGS: tuple[str, ...] = (
+    "скими",
+    "скому",
+    "ского",
+    "ском",
+    "скую",
+    "ские",
+    "ских",
+    "ским",
+    "ский",
+    "ская",
+    "ское",
+    "ого",
+    "ему",
+    "ому",
+    "ыми",
+    "ими",
+    "ениями",
+    "ениях",
+    "ениям",
+    "ения",
+    "ение",
+    "ению",
+    "ением",
+    "ниями",
+    "ниях",
+    "ниям",
+    "нии",
+    "ния",
+    "ний",
+    "нию",
+    "нием",
+    "иями",
+    "иях",
+    "иям",
+    "ией",
+    "ии",
+    "ию",
+    "ия",
+    "ие",
+    "ий",
+    "ами",
+    "ями",
+    "ах",
+    "ях",
+    "ам",
+    "ям",
+    "ою",
+    "ею",
+    "ешь",
+    "ете",
+    "ишь",
+    "ите",
+    "али",
+    "яли",
+    "ала",
+    "яла",
+    "ить",
+    "ать",
+    "ять",
+    "еть",
+    "уть",
+    "оть",
+    "ом",
+    "ем",
+    "ым",
+    "им",
+    "ой",
+    "ей",
+    "ый",
+    "ий",
+    "ую",
+    "юю",
+    "яя",
+    "ая",
+    "ое",
+    "ее",
+    "ые",
+    "ие",
+    "а",
+    "я",
+    "о",
+    "е",
+    "и",
+    "ы",
+    "у",
+    "ю",
+    "ь",
+)
+
+
+def _meaningful_positive_tokens_for_overlap(text: str) -> set[str]:
+    return {t for t in _keyword_positive_tokens(text) if t not in _RU_FUNCTION_WORDS}
+
+
+def _meaningful_morph_overlap_keys(text: str) -> set[str]:
+    """
+    Ключи для пересечения фраз: основа слова + цифры как есть, чтобы «квартиру»/«квартира»
+    давали одно пересечение; короткие токены (жк, мск) сохраняем целиком.
+    """
+    keys: set[str] = set()
+    for t in _meaningful_positive_tokens_for_overlap(text):
+        if t.isdigit() and len(t) == 4 and 1990 <= int(t) <= 2099:
+            keys.add(t)
+            continue
+        b = _ru_approx_morph_base(t)
+        if len(b) >= 3:
+            keys.add(b)
+        elif t:
+            keys.add(t)
+    return keys
+
+
+def _ru_strip_one_inflection(w: str) -> tuple[str, bool]:
+    for e in _RU_INFLECTION_ENDINGS:
+        if len(w) > len(e) + 2 and w.endswith(e):
+            return w[: -len(e)], True
+    return w, False
+
+
+def _ru_approx_morph_base(word: str) -> str:
+    w = (word or "").lower()
+    if not w or w.isdigit():
+        return w
+    guard = 0
+    while len(w) > 3 and guard < 12:
+        nw, hit = _ru_strip_one_inflection(w)
+        if not hit:
+            break
+        w = nw
+        guard += 1
+    if len(w) < 3:
+        return (word or "").lower()
+    return w
+
+
 def _negative_tokens(items: Any) -> set[str]:
     if not isinstance(items, list):
         return set()
@@ -205,25 +412,6 @@ def _combined_negatives_campaign_group(
     return n
 
 
-def _keyword_overlap_excluded_by_negatives(
-    left_tokens: set[str],
-    right_tokens: set[str],
-    neg_for_left: set[str],
-    neg_for_right: set[str],
-) -> bool:
-    """
-    Пересечение спроса между двумя фразами считается снятым, если «хвост» одной фразы
-    перекрыт минус-словами кампании/группы другой стороны (классический кросс-минус).
-    """
-    only_l = left_tokens - right_tokens
-    only_r = right_tokens - left_tokens
-    if only_r and only_r <= neg_for_left:
-        return True
-    if only_l and only_l <= neg_for_right:
-        return True
-    return False
-
-
 def _keyword_phrase_minus_tokens(text: str) -> set[str]:
     """Минус-слова, заданные прямо во фразе (токены с ведущим «-»)."""
     raw_tokens = [item for item in _normalize_phrase_minus_hyphens(text).split() if item]
@@ -238,22 +426,41 @@ def _keyword_phrase_minus_tokens(text: str) -> set[str]:
 
 
 def _minus_token_covers_positive_token(minus: str, positive: str) -> bool:
-    """Грубое совпадение корня (банк vs банки), чтобы не путать с явным кросс-минусом во фразе."""
+    """
+    Минус перекрывает плюс-токен: точное совпадение, префикс (банк/банки) или грубая
+    нормализация русской словоформы (сельский/сельская, ипотеку/ипотека).
+    """
     if minus == positive:
         return True
-    if len(minus) < 2 or len(positive) < 2:
+    if not minus or not positive:
         return False
-    if positive.startswith(minus) or minus.startswith(positive):
+    if _year_lexeme_and_digit_year_incompatible(minus, positive):
+        return False
+    if minus.isdigit() and positive.isdigit():
+        return minus == positive
+    if len(minus) >= 2 and len(positive) >= 2:
+        if positive.startswith(minus) or minus.startswith(positive):
+            return True
+    bm = _ru_approx_morph_base(minus)
+    bp = _ru_approx_morph_base(positive)
+    if len(bm) >= 3 and len(bp) >= 3 and bm == bp:
+        return True
+    if len(bm) >= 4 and len(bp) >= 4 and (bp.startswith(bm) or bm.startswith(bp)):
         return True
     return False
 
 
-def _exclusive_tokens_covered_by_phrase_minus(exclusive: set[str], phrase_minus: set[str]) -> bool:
+def _tail_tokens_covered_by_minus_pool(exclusive: set[str], minus_pool: set[str]) -> bool:
+    """
+    Все «лишние» токены одной фразы перекрыты минусами другой (инлайн + кампания/группа),
+    с учётом словоформ; «год» и «2026» не смешиваются (см. _year_lexeme_and_digit_year_incompatible).
+    """
     if not exclusive:
         return False
     for pos in exclusive:
-        if not any(_minus_token_covers_positive_token(m, pos) for m in phrase_minus):
-            return False
+        if any(_minus_token_covers_positive_token(m, pos) for m in minus_pool):
+            continue
+        return False
     return True
 
 
@@ -1323,39 +1530,39 @@ def _duplicate_keywords_with_overlap(ctx: L1Context, rule: dict[str, Any]) -> li
         left = kws[i]
         left_id = str(left.get("id") or "")
         left_phrase = str(left.get("phrase") or left.get("text") or "")
-        left_tokens = _keyword_positive_tokens(left_phrase)
-        if not left_tokens:
+        left_tokens_full = _keyword_positive_tokens(left_phrase)
+        left_keys = _meaningful_morph_overlap_keys(left_phrase)
+        if not left_keys:
             continue
         g_left = str(left.get("ad_group_id"))
         c_left = str(left.get("campaign_id"))
         for j in range(i + 1, len(kws)):
             right = kws[j]
             right_phrase = str(right.get("phrase") or right.get("text") or "")
-            right_tokens = _keyword_positive_tokens(right_phrase)
-            if not right_tokens:
+            right_tokens_full = _keyword_positive_tokens(right_phrase)
+            right_keys = _meaningful_morph_overlap_keys(right_phrase)
+            if not right_keys:
                 continue
             g_right = str(right.get("ad_group_id"))
             c_right = str(right.get("campaign_id"))
             same_group = g_left == g_right
-            if same_group and left_tokens == right_tokens:
+            if same_group and left_tokens_full == right_tokens_full:
                 continue
-            inter = left_tokens & right_tokens
+            inter = left_keys & right_keys
             if not inter:
                 continue
-            overlap_ratio = len(inter) / max(1, min(len(left_tokens), len(right_tokens)))
-            if overlap_ratio < 0.7:
+            overlap_ratio = len(inter) / max(1, min(len(left_keys), len(right_keys)))
+            if overlap_ratio < 0.62:
                 continue
             neg_left = _combined_negatives_campaign_group(camp_by_id.get(c_left), grp_by_id.get(g_left))
             neg_right = _combined_negatives_campaign_group(camp_by_id.get(c_right), grp_by_id.get(g_right))
-            if _keyword_overlap_excluded_by_negatives(left_tokens, right_tokens, neg_left, neg_right):
-                continue
             phrase_minus_left = _keyword_phrase_minus_tokens(left_phrase)
             phrase_minus_right = _keyword_phrase_minus_tokens(right_phrase)
-            only_l = left_tokens - right_tokens
-            only_r = right_tokens - left_tokens
-            if _exclusive_tokens_covered_by_phrase_minus(only_r, phrase_minus_left):
+            only_l = left_keys - right_keys
+            only_r = right_keys - left_keys
+            if _tail_tokens_covered_by_minus_pool(only_r, phrase_minus_left | neg_left):
                 continue
-            if _exclusive_tokens_covered_by_phrase_minus(only_l, phrase_minus_right):
+            if _tail_tokens_covered_by_minus_pool(only_l, phrase_minus_right | neg_right):
                 continue
             if c_left != c_right:
                 c_left_obj = camp_by_id.get(c_left) or {}

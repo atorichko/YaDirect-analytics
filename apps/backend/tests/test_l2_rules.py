@@ -30,6 +30,18 @@ def test_campaign_without_metrika_counter_rule() -> None:
         ],
     )
     assert rule(ctx_multi, {}) == []
+    ctx_counter_ids = L2Context(
+        account_id="acc1",
+        campaigns=[
+            {
+                "id": "c1",
+                "status": "active",
+                "metrika_counter_id": None,
+                "CounterIds": [57157849, 98751909, 98801492],
+            },
+        ],
+    )
+    assert rule(ctx_counter_ids, {}) == []
 
 
 def test_campaign_without_metrika_goals_rule() -> None:
@@ -49,6 +61,11 @@ def test_campaign_without_metrika_goals_rule() -> None:
         campaigns=[{"id": "c1", "status": "active", "metrika_counter_id": "1", "goal_ids": ["g1"]}],
     )
     assert rule(ctx_ok, {}) == []
+    ctx_ok_numeric_goal = L2Context(
+        account_id="acc1",
+        campaigns=[{"id": "c1", "status": "ON", "metrika_counter_ids": ["98751909"], "goal_ids": ["362433471"]}],
+    )
+    assert rule(ctx_ok_numeric_goal, {}) == []
 
 
 def test_conversion_strategy_without_metrika_rule() -> None:

@@ -60,6 +60,7 @@ const EVIDENCE_LABEL_RU: Record<string, string> = {
   group_id: "Группа",
   group_name: "Название группы",
   ad_id: "Объявление",
+  sample_ad_id: "Пример объявления",
   keyword_id: "Ключ",
   keyword_text: "Фраза",
   keywords: "Фразы",
@@ -205,11 +206,58 @@ function tryScalarDnaLink(key: string, v: unknown, ctx: EvidenceLinkCtx): ReactN
       </a>
     );
   }
+  if (key === "sample_ad_id") {
+    const cid = String(row.campaign_external_id ?? ev.campaign_id ?? ctx.pageCampaignId ?? "").trim();
+    const gid = String(row.group_external_id ?? ev.group_id ?? "").trim();
+    if (!cid || !gid || !/^\d+$/.test(cid) || !/^\d+$/.test(gid)) return null;
+    return (
+      <a className={aCls} href={dnaBannerHref(login, cid, gid, id)} target="_blank" rel="noreferrer">
+        {id}
+      </a>
+    );
+  }
   return null;
 }
 
 function formatEvidenceValue(key: string, v: unknown, linkCtx?: EvidenceLinkCtx): ReactNode {
   if (v === null || v === undefined) return "—";
+  if (
+    key === "ad_ids" &&
+    Array.isArray(v) &&
+    v.length > 0 &&
+    typeof v[0] !== "object" &&
+    linkCtx?.yandexLogin
+  ) {
+    const login = linkCtx.yandexLogin;
+    const ev = linkCtx.ev;
+    const row = linkCtx.row;
+    const cid = String(row.campaign_external_id ?? ev.campaign_id ?? linkCtx.pageCampaignId ?? "").trim();
+    const gid = String(row.group_external_id ?? ev.group_id ?? "").trim();
+    const aCls = "text-blue-700 underline underline-offset-2";
+    if (/^\d+$/.test(cid) && /^\d+$/.test(gid)) {
+      return (
+        <ul className="mt-1 list-inside list-disc space-y-0.5 font-mono text-[11px]">
+          {(v as unknown[]).map((x, i) => {
+            const aid = String(x ?? "").trim();
+            if (!/^\d+$/.test(aid)) {
+              return (
+                <li key={i}>
+                  <span className="text-muted-foreground">{aid}</span>
+                </li>
+              );
+            }
+            return (
+              <li key={i}>
+                <a className={aCls} href={dnaBannerHref(login, cid, gid, aid)} target="_blank" rel="noreferrer">
+                  {aid}
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      );
+    }
+  }
   if (linkCtx?.yandexLogin && typeof v === "string") {
     const linked = tryScalarDnaLink(key, v, linkCtx);
     if (linked) return linked;

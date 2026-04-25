@@ -4,7 +4,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, unquote, urlparse
 
 from app.services.l1_rules import FindingDraft
 from app.services.yandex_direct_dynamic_url import (
@@ -14,9 +14,11 @@ from app.services.yandex_direct_dynamic_url import (
 )
 
 _TECH_VALUES = {"", "undefined", "null", "none", "(not set)"}
-_PLACEHOLDER_RE = re.compile(r"(\{\{[^{}]+\}\}|\{[^{}]+\}|%[^%]+%|\[[^\[\]]+\]|<[^<>]+>)")
+# URL: не включаем «%…%» — в query это почти всегда UTF-8 percent-encoding (%D0%9D…), а не шаблон.
+_PLACEHOLDER_RE = re.compile(r"(\{\{[^{}]+\}\}|\{[^{}]+\}|\[[^\[\]]+\]|<[^<>]+>)")
 # utm_content / utm_term often differ on purpose (объявление vs быстрые ссылки).
 _STRICT_UTM_KEYS = frozenset({"utm_source", "utm_medium", "utm_campaign"})
+_NON_ASCII_RE = re.compile(r"[^\x00-\x7F]")
 
 
 @dataclass(slots=True)
@@ -75,13 +77,35 @@ def _tracking_like_urls_from_entity(entity: dict[str, Any]) -> list[str]:
         "campaign_tracking_url",
         "mobile_app_tracking_url",
         "href",
+        "url_parameters",
+        "url_params",
+        "tracking_params",
     )
     out: list[str] = []
     for k in keys:
         v = entity.get(k)
-        if isinstance(v, str) and v.strip().startswith(("http://", "https://")):
-            out.append(v.strip())
+        if not isinstance(v, str):
+            continue
+        vv = v.strip()
+        if not vv:
+            continue
+        # В Директе "Параметры URL" часто приходят как query-строка без схемы/хоста.
+        if vv.startswith(("http://", "https://")) or "=" in vv:
+            out.append(vv)
     return out
+
+
+def _utm_params_from_tracking_value(value: str) -> dict[str, str]:
+    raw = value.strip()
+    if not raw:
+        return {}
+    query = raw
+    if raw.startswith(("http://", "https://")):
+        query = urlparse(raw).query or ""
+    if query.startswith("?"):
+        query = query[1:]
+    pairs = utm_pairs_with_yandex_macro_normalization(parse_qsl(query, keep_blank_values=True))
+    return {k.lower(): v for k, v in pairs}
 
 
 def _campaign_or_group_covers_required_utm(ctx: L3Context, ad: dict[str, Any], required: list[str]) -> bool:
@@ -94,9 +118,7 @@ def _campaign_or_group_covers_required_utm(ctx: L3Context, ad: dict[str, Any], r
         if str(camp.get("id")) != cid:
             continue
         for u in _tracking_like_urls_from_entity(camp):
-            parsed = urlparse(u)
-            pairs = utm_pairs_with_yandex_macro_normalization(parse_qsl(parsed.query, keep_blank_values=True))
-            params = {k.lower(): v for k, v in pairs}
+            params = _utm_params_from_tracking_value(u)
             if all(p.lower() in params for p in required):
                 return True
     for grp in ctx.groups:
@@ -106,9 +128,7 @@ def _campaign_or_group_covers_required_utm(ctx: L3Context, ad: dict[str, Any], r
         if cid and gc and gc != cid:
             continue
         for u in _tracking_like_urls_from_entity(grp):
-            parsed = urlparse(u)
-            pairs = utm_pairs_with_yandex_macro_normalization(parse_qsl(parsed.query, keep_blank_values=True))
-            params = {k.lower(): v for k, v in pairs}
+            params = _utm_params_from_tracking_value(u)
             if all(p.lower() in params for p in required):
                 return True
     return False
@@ -264,6 +284,10 @@ def _utm_error_codes(raw_query: str, raw_pairs: list[tuple[str, str]]) -> list[s
         codes.append("malformed_separator")
     keys_lower = [k.lower() for k, _ in raw_pairs]
     for k, v in raw_pairs:
+        if _is_human_text_query_token(k):
+            # Иногда в URL попадают "оторванные" percent-encoded текстовые куски
+            # без имени параметра; они не влияют на UTM-валидацию.
+            continue
         lk = k.lower() if k else ""
         if k == "" or lk == "":
             codes.append("empty_param_name")
@@ -276,6 +300,22 @@ def _utm_error_codes(raw_query: str, raw_pairs: list[tuple[str, str]]) -> list[s
             codes.append(f"duplicate_param:{lk}")
     # preserve stable order: malformed first, then alphabetical by code string
     return sorted(set(codes), key=lambda x: (not x.startswith("malformed"), x))
+
+
+def _is_human_text_query_token(key: str) -> bool:
+    k = str(key or "").strip()
+    if not k:
+        return False
+    if _NON_ASCII_RE.search(k):
+        return True
+    if "%" in k:
+        try:
+            decoded = unquote(k)
+        except Exception:  # noqa: BLE001
+            return False
+        if _NON_ASCII_RE.search(decoded):
+            return True
+    return False
 
 
 def _base_finding(ad: dict[str, Any], entity_key: str, issue_location: str, evidence: dict, recommendation: str, impact: str) -> FindingDraft:
@@ -499,6 +539,8 @@ def _empty_or_technical_url_params(ctx: L3Context, rule: dict[str, Any]) -> list
             pairs = parse_qsl(parsed.query, keep_blank_values=True)
             bad: dict[str, str] = {}
             for k, v in pairs:
+                if _is_human_text_query_token(str(k)):
+                    continue
                 if str(v).strip().lower() in _TECH_VALUES:
                     bad[str(k)] = str(v)
             if not bad:

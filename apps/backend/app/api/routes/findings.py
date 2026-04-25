@@ -22,6 +22,7 @@ def _to_finding_out(row) -> FindingOut:
         rule_name=row.rule_name,
         level=row.level.value,
         severity=row.severity.value,
+        entity_key=row.entity_key,
         issue_location=row.issue_location,
         impact_ru=row.impact_ru,
         recommendation_ru=row.recommendation_ru,

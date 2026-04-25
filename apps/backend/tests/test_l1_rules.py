@@ -1,5 +1,44 @@
+import pytest
+
 from app.services.l1_rules import L1Context, build_l1_rule_registry
 from tests.fixture_loader import campaigns_normalized_from_fixture, l1_extensions_from_fixture, load_fixture_dict
+
+
+_LONG_IPOTEKA_MINUS_TAIL = (
+    "ипотека -банк -втб -2026 -выкса -жилье -первоначальный -калькулятор -квартира "
+    "-можно -покупка -сбер -сбербанк -сельский -семейный"
+)
+
+
+def _ctx_dup_kw_cross_groups(phrase_left: str, phrase_right: str) -> L1Context:
+    return L1Context(
+        account_id="a",
+        campaigns=[{"id": "c1", "status": "active"}],
+        groups=[
+            {"id": "g1", "campaign_id": "c1", "status": "active"},
+            {"id": "g2", "campaign_id": "c1", "status": "active"},
+        ],
+        ads=[],
+        keywords=[
+            {
+                "id": "k1",
+                "campaign_id": "c1",
+                "ad_group_id": "g1",
+                "phrase": phrase_left,
+                "text": phrase_left,
+                "state": "on",
+            },
+            {
+                "id": "k2",
+                "campaign_id": "c1",
+                "ad_group_id": "g2",
+                "phrase": phrase_right,
+                "text": phrase_right,
+                "state": "on",
+            },
+        ],
+        extensions=[],
+    )
 
 
 def test_active_campaign_respects_yandex_accepted_groups() -> None:
@@ -548,3 +587,66 @@ def test_duplicate_ads_fired_when_same_text_and_same_image_id() -> None:
     findings = rule(ctx, {})
     assert len(findings) == 1
     assert findings[0].evidence.get("shared_image_fingerprint") == "id:555"
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        (_LONG_IPOTEKA_MINUS_TAIL, "сельская ипотека -2026"),
+        ("семейная ипотека -2026 -год -условие", "семейная ипотека условия -2026"),
+        ("ипотека 2026 -год -сельский -семейный -условие", "ипотека в 2026 году условия"),
+        ("ипотека 2026 -год -сельский -семейный -условие", "семейная ипотека в 2026 году"),
+        (_LONG_IPOTEKA_MINUS_TAIL, "ипотека на жилье"),
+        (_LONG_IPOTEKA_MINUS_TAIL, "семейная ипотека 2026 -год -условие"),
+        ("новостройки -квартира -рассрочка", "новостройки в рассрочку"),
+        (_LONG_IPOTEKA_MINUS_TAIL, "ипотека выксе"),
+        ("семейная ипотека 2026 -год -условие", "семейная ипотека в 2026 году"),
+        ("ипотека в 2026 году -условие -семейный", "семейная ипотека в 2026 году"),
+        ("купить квартиру -выкса", "купить квартиру в выксе"),
+        (_LONG_IPOTEKA_MINUS_TAIL, "сельская ипотека 2026"),
+        (_LONG_IPOTEKA_MINUS_TAIL, "семейная ипотека -2026 -год -условие"),
+        ("условия ипотеки 2026 -год -семейный", "условия семейной ипотеки в 2026"),
+        ("семейная ипотека -2026 -год -условие", "семейная ипотека в 2026 году"),
+        ("ипотека 2026 -год -сельский -семейный -условие", "семейная ипотека 2026 -год -условие"),
+        ("ипотека в 2026 году -условие -семейный", "ипотека в 2026 году условия"),
+        ("ипотека 2026 -год -сельский -семейный -условие", "ипотека в 2026 году -условие -семейный"),
+        ("ипотека 2026 -год -сельский -семейный -условие", "сельская ипотека 2026"),
+    ],
+)
+def test_duplicate_keywords_with_overlap_suppressed_on_production_pairs(left: str, right: str) -> None:
+    rule = build_l1_rule_registry()["DUPLICATE_KEYWORDS_WITH_OVERLAP"]
+    assert rule(_ctx_dup_kw_cross_groups(left, right), {}) == []
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("можно ипотеку", "можно ли семейную ипотеку"),
+        ("ипотека в 2026 году условия", "семейная ипотека в 2026 году"),
+        (_LONG_IPOTEKA_MINUS_TAIL, "семейная ипотека условия -2026"),
+        (_LONG_IPOTEKA_MINUS_TAIL, "ипотека в 2026 году -условие -семейный"),
+        ("квартира от застройщика нижний рассрочка", "рассрочка от застройщика -квартира"),
+        ("жк квартиру от застройщика", "как взять квартиру в рассрочку от застройщика"),
+        ("ипотека в 2026 году условия", _LONG_IPOTEKA_MINUS_TAIL),
+        ("как взять квартиру в рассрочку от застройщика", "квартира в рассрочку от застройщика -взять -нижний"),
+        (_LONG_IPOTEKA_MINUS_TAIL, "семейная ипотека года -2026"),
+        (_LONG_IPOTEKA_MINUS_TAIL, "семейная ипотека в 2026 году"),
+    ],
+)
+def test_duplicate_keywords_with_overlap_fires_on_production_pairs(left: str, right: str) -> None:
+    rule = build_l1_rule_registry()["DUPLICATE_KEYWORDS_WITH_OVERLAP"]
+    assert len(rule(_ctx_dup_kw_cross_groups(left, right), {})) >= 1
+
+
+def test_duplicate_keywords_minus_god_never_covers_digit_year_token() -> None:
+    """Минус «год» не снимает пересечение с плюс-токеном «2026» (разные сущности)."""
+    rule = build_l1_rule_registry()["DUPLICATE_KEYWORDS_WITH_OVERLAP"]
+    ctx = _ctx_dup_kw_cross_groups("ипотека 2026", "ипотека -год")
+    assert len(rule(ctx, {})) >= 1
+
+
+def test_duplicate_keywords_minus_digit_year_never_covers_god_lexeme() -> None:
+    """Минус «2026» не снимает пересечение с плюс-токеном «году» (симметрично)."""
+    rule = build_l1_rule_registry()["DUPLICATE_KEYWORDS_WITH_OVERLAP"]
+    ctx = _ctx_dup_kw_cross_groups("ипотека в 2026 году", "ипотека -2026")
+    assert len(rule(ctx, {})) >= 1

@@ -20,7 +20,7 @@ from app.core.config import settings
 from app.repositories.account_credential import AccountCredentialRepository
 from app.repositories.ad_account import AdAccountRepository
 from app.repositories.entity_snapshot import EntitySnapshotRepository
-from app.schemas.reporting import AdAccountOut, AdAccountUpdateRequest, CampaignOut
+from app.schemas.reporting import AdAccountOut, AdAccountUpdateRequest, CampaignOut, DirectApiUnitsOut
 from app.models.entity_snapshot import SnapshotEntityType
 
 router = APIRouter(prefix="/ad-accounts", tags=["ad-accounts"])
@@ -44,6 +44,111 @@ def _normalize_region_ids_for_snapshot(raw: Any) -> list[int]:
         except (TypeError, ValueError):
             continue
     return sorted(set(out))
+
+
+def _normalize_counter_ids_for_snapshot(raw: Any) -> list[str]:
+    """Yandex Direct CounterIds list or wrapped payload -> sorted unique string ids."""
+    if raw is None:
+        return []
+    if isinstance(raw, dict):
+        if "Items" in raw:
+            raw = raw.get("Items")
+        elif "CounterIds" in raw:
+            raw = raw.get("CounterIds")
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for x in raw:
+        s = str(x).strip()
+        if not s or s.lower() in {"none", "null", "0"}:
+            continue
+        out.append(s)
+    return sorted(set(out))
+
+
+def _normalize_tracking_params(raw: Any) -> str | None:
+    """Tracking params from Direct API as trimmed query string."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    return s or None
+
+
+def _campaign_type_payload(item: dict[str, Any]) -> dict[str, Any]:
+    for key in ("TextCampaign", "UnifiedCampaign", "SmartCampaign", "DynamicTextCampaign", "MobileAppCampaign"):
+        block = item.get(key)
+        if isinstance(block, dict):
+            return block
+    return {}
+
+
+def _campaign_counter_ids(item: dict[str, Any]) -> list[str]:
+    direct = _normalize_counter_ids_for_snapshot(item.get("CounterIds"))
+    if direct:
+        return direct
+    block = _campaign_type_payload(item)
+    return _normalize_counter_ids_for_snapshot(block.get("CounterIds"))
+
+
+def _campaign_tracking_params(item: dict[str, Any]) -> str | None:
+    direct = _normalize_tracking_params(item.get("TrackingParams"))
+    if direct:
+        return direct
+    block = _campaign_type_payload(item)
+    return _normalize_tracking_params(block.get("TrackingParams"))
+
+
+def _collect_goal_ids_from_payload(node: Any, out: list[str]) -> None:
+    if isinstance(node, dict):
+        for k, v in node.items():
+            lk = str(k).lower()
+            if lk in {"goalid", "goal_id", "optimizegoalid", "optimize_goal_id"}:
+                if isinstance(v, list):
+                    for x in v:
+                        sx = str(x).strip()
+                        if sx and sx not in {"0", "None", "null"}:
+                            out.append(sx)
+                else:
+                    sx = str(v).strip()
+                    if sx and sx not in {"0", "None", "null"}:
+                        out.append(sx)
+            _collect_goal_ids_from_payload(v, out)
+    elif isinstance(node, list):
+        for item in node:
+            _collect_goal_ids_from_payload(item, out)
+
+
+def _campaign_goal_ids(item: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    # 1) explicit top-level list if present
+    top = item.get("GoalIds")
+    if isinstance(top, list):
+        for x in top:
+            sx = str(x).strip()
+            if sx and sx not in {"0", "None", "null"}:
+                out.append(sx)
+    # 2) scan full payload + typed payload for nested GoalId/OptimizeGoalId
+    _collect_goal_ids_from_payload(item, out)
+    _collect_goal_ids_from_payload(_campaign_type_payload(item), out)
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for x in out:
+        if x not in seen:
+            seen.add(x)
+            uniq.append(x)
+    return uniq
+
+
+def _parse_units_header(raw_units: str | None) -> tuple[int | None, int | None, int | None]:
+    if not raw_units:
+        return None, None, None
+    parts = [p.strip() for p in raw_units.split("/")]
+    if len(parts) != 3:
+        return None, None, None
+    try:
+        return int(parts[0]), int(parts[1]), int(parts[2])
+    except ValueError:
+        return None, None, None
 
 
 @router.get("", response_model=list[AdAccountOut])
@@ -283,6 +388,12 @@ async def sync_account_campaigns(
         client_login=account.login,
         campaign_ids=campaign_ids,
     )
+    ad_group_ids = [int(item.get("Id")) for item in ad_groups if item.get("Id") is not None]
+    audience_targets = await _fetch_direct_audience_targets(
+        access_token=access_token,
+        client_login=account.login,
+        ad_group_ids=ad_group_ids,
+    )
     ads = await _fetch_direct_ads(
         access_token=access_token,
         client_login=account.login,
@@ -297,6 +408,19 @@ async def sync_account_campaigns(
     now = datetime.now(timezone.utc)
     upserted = 0
     campaign_region_ids: dict[str, set[int]] = defaultdict(set)
+    retargeting_by_group: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in audience_targets:
+        gid = str(item.get("AdGroupId") or "")
+        if not gid:
+            continue
+        retargeting_by_group[gid].append(
+            {
+                "id": str(item.get("Id") or ""),
+                "campaign_id": str(item.get("CampaignId") or ""),
+                "retargeting_list_id": item.get("RetargetingListId"),
+                "state": item.get("State"),
+            }
+        )
 
     for item in ad_groups:
         group_id = str(item.get("Id") or "")
@@ -312,6 +436,10 @@ async def sync_account_campaigns(
             "status": item.get("Status"),
             "serving_status": item.get("ServingStatus"),
             "region_ids": region_ids,
+            "retargeting_lists": retargeting_by_group.get(group_id, []),
+            "tracking_params": _normalize_tracking_params(item.get("TrackingParams")),
+            "tracking_template": _normalize_tracking_params(item.get("TrackingParams")),
+            "tracking_url": _normalize_tracking_params(item.get("TrackingParams")),
         }
         content_hash = hashlib.sha256(
             json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -335,6 +463,13 @@ async def sync_account_campaigns(
             "name": item.get("Name"),
             "status": item.get("State"),
             "type": item.get("Type"),
+            "counter_ids": _campaign_counter_ids(item),
+            "CounterIds": _campaign_counter_ids(item),
+            "metrika_counter_ids": _campaign_counter_ids(item),
+            "tracking_params": _campaign_tracking_params(item),
+            "tracking_template": _campaign_tracking_params(item),
+            "tracking_url": _campaign_tracking_params(item),
+            "goal_ids": _campaign_goal_ids(item),
             "region_ids": merged_regions,
         }
         content_hash = hashlib.sha256(
@@ -406,6 +541,68 @@ async def sync_account_campaigns(
         )
     await session.commit()
     return {"synced_campaigns": upserted}
+
+
+@router.get("/{account_id}/direct-api-units", response_model=DirectApiUnitsOut)
+async def get_direct_api_units(
+    account_id: UUID,
+    _admin: RequireAdmin,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> DirectApiUnitsOut:
+    accounts = AdAccountRepository(session)
+    account = await accounts.get_by_id(account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ad account not found")
+
+    creds = AccountCredentialRepository(session)
+    credential = await creds.get_by_account_id(account_id)
+    if credential is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No OAuth credential for account")
+
+    access_token = creds.get_access_token(credential)
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept-Language": "ru",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+    if account.login:
+        headers["Client-Login"] = account.login
+
+    body = {
+        "method": "get",
+        "params": {
+            "SelectionCriteria": {},
+            "FieldNames": ["Id"],
+            "Page": {"Limit": 1, "Offset": 0},
+        },
+    }
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await _post_with_retry(
+            client=client,
+            url=settings.yandex_direct_api_url.rstrip("/") + "/campaigns",
+            headers=headers,
+            json=body,
+        )
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Yandex Direct units check failed: {resp.status_code} {resp.text}",
+        )
+    payload = resp.json()
+    if "error" in payload:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Yandex Direct error: {payload['error']}")
+
+    raw_units = resp.headers.get("Units")
+    spent, remaining, daily_limit = _parse_units_header(raw_units)
+    return DirectApiUnitsOut(
+        account_id=account.id,
+        account_login=account.login,
+        spent=spent,
+        remaining=remaining,
+        daily_limit=daily_limit,
+        units_used_login=resp.headers.get("Units-Used-Login"),
+        units_header_raw=raw_units,
+    )
 
 
 def _state_secret() -> bytes:
@@ -485,50 +682,92 @@ async def _fetch_direct_campaigns(*, access_token: str, client_login: str) -> li
     }
     if client_login:
         headers["Client-Login"] = client_login
-    # Some campaign kinds (for example, Master/Unified flows) may require
-    # explicit type filters depending on account setup; we merge all responses.
-    selection_variants = [
-        {},
-        {"Types": ["UNIFIED_CAMPAIGN"]},
-        {"Types": ["SMART_CAMPAIGN"]},
-        {"Types": ["MASTER_CAMPAIGN"]},
-    ]
     merged: dict[str, dict] = {}
     async with httpx.AsyncClient(timeout=25) as client:
-        for selection in selection_variants:
-            body = {
-                "method": "get",
-                "params": {
-                    "SelectionCriteria": selection,
-                    "FieldNames": ["Id", "Name", "State", "Type"],
-                },
-            }
-            resp = await _post_with_retry(
-                client=client,
-                url=settings.yandex_direct_api_url.rstrip("/") + "/campaigns",
-                headers=headers,
-                json=body,
+        # Pass 1: always fetch base campaign rows (stable across types).
+        base_body = {
+            "method": "get",
+            "params": {
+                "SelectionCriteria": {},
+                "FieldNames": ["Id", "Name", "State", "Type"],
+            },
+        }
+        resp = await _post_with_retry(
+            client=client,
+            url=settings.yandex_direct_api_url.rstrip("/") + "/campaigns",
+            headers=headers,
+            json=base_body,
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Yandex Direct campaigns sync failed: {resp.status_code} {resp.text}",
             )
-            if resp.status_code >= 400:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Yandex Direct campaigns sync failed: {resp.status_code} {resp.text}",
-                )
-            payload = resp.json()
-            if "error" in payload:
-                error = payload["error"]
-                detail = str(error.get("error_detail") or "")
-                # Ignore unsupported enum values for account API version/permissions.
-                if error.get("error_code") == 8000 and "неверное значение перечисления" in detail.lower():
+        payload = resp.json()
+        if "error" in payload:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Yandex Direct error: {payload['error']}")
+        for row in payload.get("result", {}).get("Campaigns", []):
+            cid = str(row.get("Id") or "")
+            if cid:
+                merged[cid] = row
+
+        # Pass 2: enrich by campaign type (optional, best-effort).
+        by_type: dict[str, list[int]] = defaultdict(list)
+        for row in merged.values():
+            ctype = str(row.get("Type") or "")
+            cid_raw = row.get("Id")
+            if not ctype or cid_raw is None:
+                continue
+            try:
+                by_type[ctype].append(int(cid_raw))
+            except (TypeError, ValueError):
+                continue
+
+        type_enrichment = {
+            "TEXT_CAMPAIGN": ("TextCampaignFieldNames", ["CounterIds", "TrackingParams", "BiddingStrategy", "PriorityGoals"]),
+            "UNIFIED_CAMPAIGN": ("UnifiedCampaignFieldNames", ["CounterIds", "TrackingParams", "BiddingStrategy", "PriorityGoals"]),
+            "SMART_CAMPAIGN": ("SmartCampaignFieldNames", ["CounterIds", "TrackingParams", "BiddingStrategy", "PriorityGoals"]),
+            "DYNAMIC_TEXT_CAMPAIGN": (
+                "DynamicTextCampaignFieldNames",
+                ["CounterIds", "TrackingParams", "BiddingStrategy", "PriorityGoals"],
+            ),
+            "MOBILE_APP_CAMPAIGN": (
+                "MobileAppCampaignFieldNames",
+                ["CounterIds", "TrackingParams", "BiddingStrategy", "PriorityGoals"],
+            ),
+        }
+        for ctype, (field_key, field_values) in type_enrichment.items():
+            ids = by_type.get(ctype) or []
+            if not ids:
+                continue
+            for i in range(0, len(ids), 10):
+                chunk = ids[i : i + 10]
+                enrich_body = {
+                    "method": "get",
+                    "params": {
+                        "SelectionCriteria": {"Ids": chunk},
+                        "FieldNames": ["Id", "Name", "State", "Type"],
+                        field_key: field_values,
+                    },
+                }
+                try:
+                    resp = await _post_with_retry(
+                        client=client,
+                        url=settings.yandex_direct_api_url.rstrip("/") + "/campaigns",
+                        headers=headers,
+                        json=enrich_body,
+                    )
+                    if resp.status_code >= 400:
+                        continue
+                    payload = resp.json()
+                    if "error" in payload:
+                        continue
+                    for row in payload.get("result", {}).get("Campaigns", []):
+                        cid = str(row.get("Id") or "")
+                        if cid and cid in merged:
+                            merged[cid].update(row)
+                except Exception:
                     continue
-                # Ignore missing campaign types in account.
-                if error.get("error_code") == 8800:
-                    continue
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Yandex Direct error: {error}")
-            for row in payload.get("result", {}).get("Campaigns", []):
-                cid = str(row.get("Id") or "")
-                if cid:
-                    merged[cid] = row
     return list(merged.values())
 
 
@@ -577,34 +816,91 @@ async def _fetch_direct_ad_groups(*, access_token: str, client_login: str, campa
     async with httpx.AsyncClient(timeout=25) as client:
         for i in range(0, len(campaign_ids), 10):
             chunk = campaign_ids[i : i + 10]
+            payload: dict[str, Any] | None = None
+            for field_names in (
+                ["Id", "CampaignId", "Name", "Status", "ServingStatus", "RegionIds", "TrackingParams"],
+                ["Id", "CampaignId", "Name", "Status", "ServingStatus", "RegionIds"],
+            ):
+                body = {
+                    "method": "get",
+                    "params": {
+                        "SelectionCriteria": {"CampaignIds": chunk},
+                        "FieldNames": field_names,
+                    },
+                }
+                resp = await _post_with_retry(
+                    client=client,
+                    url=settings.yandex_direct_api_url.rstrip("/") + "/adgroups",
+                    headers=headers,
+                    json=body,
+                )
+                if resp.status_code >= 400:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Yandex Direct adgroups failed: {resp.status_code} {resp.text}",
+                    )
+                payload = resp.json()
+                if "error" not in payload:
+                    break
+                error = payload["error"]
+                detail = str(error.get("error_detail") or "")
+                if error.get("error_code") == 8000 and "неверное значение перечисления" in detail.lower():
+                    continue
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Yandex Direct error: {error}")
+            if payload is None:
+                continue
+            if "error" in payload:
+                continue
+            rows.extend(payload.get("result", {}).get("AdGroups", []))
+    return rows
+
+
+async def _fetch_direct_audience_targets(*, access_token: str, client_login: str, ad_group_ids: list[int]) -> list[dict]:
+    """
+    Fetch ad group audience bindings (retargeting/segments).
+    Gracefully fallback to [] if this service isn't available for the account.
+    """
+    if not ad_group_ids:
+        return []
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept-Language": "ru",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+    if client_login:
+        headers["Client-Login"] = client_login
+    rows: list[dict] = []
+    async with httpx.AsyncClient(timeout=25) as client:
+        for i in range(0, len(ad_group_ids), 200):
+            chunk = ad_group_ids[i : i + 200]
             body = {
                 "method": "get",
                 "params": {
-                    "SelectionCriteria": {"CampaignIds": chunk},
+                    "SelectionCriteria": {"AdGroupIds": chunk},
                     "FieldNames": [
                         "Id",
+                        "AdGroupId",
                         "CampaignId",
-                        "Name",
-                        "Status",
-                        "ServingStatus",
-                        "RegionIds",
+                        "RetargetingListId",
+                        "State",
                     ],
                 },
             }
-            resp = await _post_with_retry(
-                client=client,
-                url=settings.yandex_direct_api_url.rstrip("/") + "/adgroups",
-                headers=headers,
-                json=body,
-            )
-            if resp.status_code >= 400:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST, detail=f"Yandex Direct adgroups failed: {resp.status_code} {resp.text}"
+            try:
+                resp = await _post_with_retry(
+                    client=client,
+                    url=settings.yandex_direct_api_url.rstrip("/") + "/audiencetargets",
+                    headers=headers,
+                    json=body,
                 )
-            payload = resp.json()
-            if "error" in payload:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Yandex Direct error: {payload['error']}")
-            rows.extend(payload.get("result", {}).get("AdGroups", []))
+                if resp.status_code >= 400:
+                    return []
+                payload = resp.json()
+                if "error" in payload:
+                    return []
+                rows.extend(payload.get("result", {}).get("AudienceTargets", []))
+            except Exception:
+                return []
     return rows
 
 

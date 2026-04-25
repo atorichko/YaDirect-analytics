@@ -22,6 +22,16 @@ class CampaignOut(BaseModel):
     status: str | None = None
 
 
+class DirectApiUnitsOut(BaseModel):
+    account_id: UUID
+    account_login: str
+    spent: int | None = None
+    remaining: int | None = None
+    daily_limit: int | None = None
+    units_used_login: str | None = None
+    units_header_raw: str | None = None
+
+
 class AdAccountUpdateRequest(BaseModel):
     name: str = Field(min_length=2, max_length=255)
 
@@ -36,6 +46,7 @@ class FindingOut(BaseModel):
     rule_name: str
     level: str
     severity: str
+    entity_key: str
     issue_location: str
     impact_ru: str
     recommendation_ru: str

@@ -363,6 +363,61 @@ export function GroupedDetailsSection({
     return <>{label}</>;
   }
 
+  function renderIssueLocationLabel(
+    issueLocation: string,
+    login: string | null,
+    pageCid: string,
+    finding: CampaignFinding,
+    ev: Record<string, unknown>,
+  ): ReactNode {
+    const raw = String(issueLocation || "").trim();
+    if (!raw.includes(":")) return raw || "—";
+    const [scope, idPartRaw] = raw.split(":", 2);
+    const idPart = String(idPartRaw || "").trim();
+    if (!idPart) return raw;
+    if (scope === "campaign") {
+      return (
+        <>
+          Кампания:
+          {login && /^\d+$/.test(idPart) ? (
+            <DnaExternalLink href={dnaCampaignHref(login, idPart)}>{idPart}</DnaExternalLink>
+          ) : (
+            idPart
+          )}
+        </>
+      );
+    }
+    if (scope === "group") {
+      const cid = String(finding.campaign_external_id ?? ev.campaign_id ?? pageCid ?? "").trim();
+      return (
+        <>
+          Группа:
+          {login && /^\d+$/.test(cid) && /^\d+$/.test(idPart) ? (
+            <DnaExternalLink href={dnaGroupHref(login, cid, idPart)}>{idPart}</DnaExternalLink>
+          ) : (
+            idPart
+          )}
+        </>
+      );
+    }
+    if (scope === "ad") {
+      const cid = String(finding.campaign_external_id ?? ev.campaign_id ?? pageCid ?? "").trim();
+      const gid = String(finding.group_external_id ?? ev.group_id ?? "").trim();
+      return (
+        <>
+          Объявление:
+          {login && /^\d+$/.test(cid) && /^\d+$/.test(gid) && /^\d+$/.test(idPart) ? (
+            <DnaExternalLink href={dnaBannerHref(login, cid, gid, idPart)}>{idPart}</DnaExternalLink>
+          ) : (
+            idPart
+          )}
+        </>
+      );
+    }
+    if (scope === "account") return <>Аккаунт:{idPart}</>;
+    return raw;
+  }
+
   if (row.rule_code === "ACTIVE_AD_REJECTED_OR_RESTRICTED") {
     const byAd = new Map<
       string,
@@ -844,7 +899,25 @@ export function GroupedDetailsSection({
             return (
               <div key={item.id}>
                 <p className="text-muted-foreground">
-                  Объявления: {aids.join(", ")}
+                  Объявления:{" "}
+                  {aids.map((aid, idx) => {
+                    const cid = String(item.campaign_external_id ?? ev.campaign_id ?? pageCampaignId ?? "").trim();
+                    const gid = String(item.group_external_id ?? ev.group_id ?? "").trim();
+                    const canLink =
+                      Boolean(yandexLogin) && /^\d+$/.test(cid) && /^\d+$/.test(gid) && /^\d+$/.test(String(aid).trim());
+                    return (
+                      <span key={`${item.id}-ad-${aid}`}>
+                        {idx > 0 ? ", " : null}
+                        {canLink ? (
+                          <DnaExternalLink href={dnaBannerHref(String(yandexLogin), cid, gid, String(aid).trim())}>
+                            {String(aid).trim()}
+                          </DnaExternalLink>
+                        ) : (
+                          String(aid).trim()
+                        )}
+                      </span>
+                    );
+                  })}
                   {sig?.title != null || sig?.url != null ? (
                     <span className="block text-xs">
                       {String(sig.title ?? "")} · {String(sig.url ?? "")}
@@ -853,11 +926,23 @@ export function GroupedDetailsSection({
                 </p>
                 {sums.length > 0 ? (
                   <ul className="mt-1 list-inside list-disc">
-                    {sums.map((s, idx) => (
-                      <li key={`${item.id}-${s.ad_id ?? idx}`}>
-                        {String(s.ad_id ?? "")}: {String(s.caption_ru ?? "")}
-                      </li>
-                    ))}
+                    {sums.map((s, idx) => {
+                      const sid = String(s.ad_id ?? "").trim();
+                      const cid = String(item.campaign_external_id ?? ev.campaign_id ?? pageCampaignId ?? "").trim();
+                      const gid = String(item.group_external_id ?? ev.group_id ?? "").trim();
+                      const canLink =
+                        Boolean(yandexLogin) && sid && /^\d+$/.test(sid) && /^\d+$/.test(cid) && /^\d+$/.test(gid);
+                      return (
+                        <li key={`${item.id}-${s.ad_id ?? idx}`}>
+                          {canLink ? (
+                            <DnaExternalLink href={dnaBannerHref(String(yandexLogin), cid, gid, sid)}>{sid}</DnaExternalLink>
+                          ) : (
+                            sid
+                          )}
+                          : {String(s.caption_ru ?? "")}
+                        </li>
+                      );
+                    })}
                   </ul>
                 ) : null}
               </div>
@@ -1264,6 +1349,78 @@ export function GroupedDetailsSection({
     );
   }
 
+  if (row.rule_code === "MISSING_REQUIRED_EXTENSIONS") {
+    return (
+      <>
+        <p className="mt-2 text-xs font-medium text-muted-foreground">Детали:</p>
+        <ul className="mt-1 space-y-2 text-sm text-foreground">
+          {sorted.map((item) => {
+            const ev = item.evidence ?? {};
+            const missing = (ev.missing_extensions as string[] | undefined) ?? [];
+            const adId = String(item.ad_external_id ?? ev.ad_id ?? "").trim();
+            const cid = String(item.campaign_external_id ?? ev.campaign_id ?? pageCampaignId ?? "").trim();
+            const gid = String(item.group_external_id ?? ev.group_id ?? "").trim();
+            return (
+              <li key={item.id} className="rounded-md border border-border/50 px-2 py-2">
+                <p className="font-medium">
+                  {yandexLogin && /^\d+$/.test(adId) && /^\d+$/.test(cid) && /^\d+$/.test(gid) ? (
+                    <DnaExternalLink href={dnaBannerHref(yandexLogin, cid, gid, adId)}>{adId}</DnaExternalLink>
+                  ) : (
+                    adId || "—"
+                  )}
+                </p>
+                {missing.length > 0 ? (
+                  <p className="mt-1 text-xs text-muted-foreground">Не хватает расширений: {missing.join(", ")}</p>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      </>
+    );
+  }
+
+  if (row.rule_code === "GROUP_ALL_ADS_REJECTED") {
+    return (
+      <>
+        <p className="mt-2 text-xs font-medium text-muted-foreground">Детали:</p>
+        <ul className="mt-1 space-y-3 text-sm text-foreground">
+          {sorted.map((item) => {
+            const ev = item.evidence ?? {};
+            const aids = (ev.ad_ids as string[] | undefined) ?? [];
+            const gid = String(item.group_external_id ?? ev.group_id ?? "").trim();
+            const gname = String(ev.group_name ?? "").trim();
+            const cid = String(item.campaign_external_id ?? ev.campaign_id ?? pageCampaignId ?? "").trim();
+            return (
+              <li key={item.id} className="rounded-md border border-border/50 px-2 py-2">
+                <p className="font-medium">{renderLinkedGroupLabel(gid, cid, gname ? ` — ${gname}` : "")}</p>
+                {aids.length > 0 ? (
+                  <>
+                    <p className="mt-1 text-xs text-muted-foreground">Объявления в группе:</p>
+                    <ul className="mt-0.5 list-inside list-disc font-mono text-[11px]">
+                      {aids.map((raw) => {
+                        const aid = String(raw ?? "").trim();
+                        return (
+                          <li key={`${item.id}-ad-${aid}`}>
+                            {yandexLogin && /^\d+$/.test(cid) && /^\d+$/.test(gid) && /^\d+$/.test(aid) ? (
+                              <DnaExternalLink href={dnaBannerHref(yandexLogin, cid, gid, aid)}>{aid}</DnaExternalLink>
+                            ) : (
+                              aid
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      </>
+    );
+  }
+
   if (row.rule_code === "DUPLICATE_SITELINKS") {
     return (
       <>
@@ -1324,9 +1481,31 @@ export function GroupedDetailsSection({
     <>
       <p className="mt-2 text-xs font-medium text-muted-foreground">Детали:</p>
       <ul className="mt-1 list-inside list-disc text-sm text-foreground">
-        {sorted.map((r) => (
-          <li key={r.id}>{formatGenericBullet(r)}</li>
-        ))}
+        {sorted.map((r) => {
+          const ev = (r.evidence ?? {}) as Record<string, unknown>;
+          const generic = formatGenericBullet(r);
+          const isIssueLocationFallback = generic === r.issue_location;
+          if (isIssueLocationFallback) {
+            return (
+              <li key={r.id}>
+                {renderIssueLocationLabel(r.issue_location, yandexLogin, pageCampaignId, r, ev)}
+              </li>
+            );
+          }
+          const adId = String(r.ad_external_id ?? ev.ad_id ?? "").trim();
+          const cid = String(r.campaign_external_id ?? ev.campaign_id ?? pageCampaignId ?? "").trim();
+          const gid = String(r.group_external_id ?? ev.group_id ?? "").trim();
+          if (yandexLogin && adId && /^\d+$/.test(adId) && /^\d+$/.test(cid) && /^\d+$/.test(gid)) {
+            const title = ev.ad_title != null ? String(ev.ad_title).trim() : "";
+            return (
+              <li key={r.id}>
+                <DnaExternalLink href={dnaBannerHref(yandexLogin, cid, gid, adId)}>{adId}</DnaExternalLink>
+                {title ? ` — ${title}` : ""}
+              </li>
+            );
+          }
+          return <li key={r.id}>{generic}</li>;
+        })}
       </ul>
     </>
   );

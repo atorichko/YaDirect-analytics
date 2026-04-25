@@ -164,6 +164,13 @@ export default function HandoffBody() {
             <code className="rounded bg-muted px-1">apps/backend/app/services/</code>.
           </li>
           <li>
+            <strong>Обязательное правило при изменении логики проверок:</strong> если в правиле используются{" "}
+            <strong>новые поля из Яндекс Директ</strong>, перед релизом обязательно проверить, что эти поля реально
+            запрашиваются в API и сохраняются в <code className="rounded bg-muted px-1">entity_snapshots.normalized_snapshot</code>.
+            Если поля не грузятся — доработать сбор данных из Директа (эндпоинты/FieldNames/нормализацию) и только потом
+            включать/обновлять правило в активном каталоге.
+          </li>
+          <li>
             В <strong>продакшене</strong> аудиты опираются на <strong>активную версию каталога в БД</strong>, а не только
             на JSON в репозитории. Загрузка и активация через API (админ):{" "}
             <code className="rounded bg-muted px-1">POST /api/v1/rule-catalogs</code> и{" "}
@@ -363,6 +370,16 @@ python3 scripts/upload_rule_catalog_api.py
         <p className="text-xs text-muted-foreground">
           Расширенный чеклист: <code className="rounded bg-muted px-1">RELEASE_CHECKLIST.md</code> в корне репозитория.
         </p>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Промт для разработчика</h2>
+        <p className="text-muted-foreground">
+          Готовая команда для ассистента/разработчика, чтобы выполнить полный цикл без рассинхрона backend/frontend:
+        </p>
+        <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg border bg-muted/30 p-4 text-[0.8rem] leading-normal">
+{`Сделай полный цикл до продакшна: проверь изменения, прогони нужные тесты, закоммить с понятным сообщением, запушь в main, выполни прод-деплой обоих сервисов (backend + frontend) из этого commit SHA с пересборкой без кэша и перезапуском контейнеров, убедись что оба сервиса работают на одном SHA, после деплоя запусти smoke-check и повторный аудит, затем пришли краткий отчёт (SHA, что задеплоено, результаты проверок).`}
+        </pre>
       </section>
     </>
   );
