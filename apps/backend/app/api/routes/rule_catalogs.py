@@ -13,6 +13,7 @@ from app.schemas.rule_catalog import (
     PublishBundledCatalogOut,
     RuleDefinitionOut,
 )
+from app.core.ai_prompt_defaults import AI_RULE_APPENDIX_RU
 from app.services.l1_rules import build_l1_rule_registry
 from app.services.l2_rules import build_l2_rule_registry
 from app.services.l3_rules import build_l3_rule_registry
@@ -30,6 +31,7 @@ def _to_detail(catalog, rules) -> CatalogWithRulesOut:
         description=catalog.description,
         is_active=catalog.is_active,
         created_at=catalog.created_at,
+        updated_at=catalog.updated_at,
         included_levels=included_levels,
         source_payload=catalog.source_payload,
         rules=[RuleDefinitionOut.model_validate(r) for r in rules],
@@ -156,6 +158,8 @@ async def get_active_catalog_coverage(
             missing.append(rule.rule_code)
     return {
         "catalog_version": catalog.version,
+        "catalog_updated_at": catalog.updated_at.isoformat(),
+        "ai_appendix_rule_codes": sorted(AI_RULE_APPENDIX_RU.keys()),
         "total_rules": len(rows),
         "enabled_rules": len([r for r in rows if r["enabled"]]),
         "implemented_enabled_rules": len([r for r in rows if r["enabled"] and r["implemented"]]),

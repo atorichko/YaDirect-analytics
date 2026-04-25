@@ -48,6 +48,7 @@ class CatalogSummaryOut(BaseModel):
     description: str | None
     is_active: bool
     created_at: datetime
+    updated_at: datetime
 
 
 class CatalogWithRulesOut(CatalogSummaryOut):

@@ -496,6 +496,22 @@ export default function CampaignReportPage() {
           }
         />
       </div>
+
+      <nav
+        className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2"
+        aria-label="Навигация по разделу"
+      >
+        <Button variant="secondary" size="sm" asChild>
+          <Link href="/dashboard">Аккаунты</Link>
+        </Button>
+        <Button variant="secondary" size="sm" asChild>
+          <Link href={`/projects/${accountId}`}>Кампании проекта</Link>
+        </Button>
+        <Button variant="default" size="sm" type="button" disabled>
+          Отчёт кампании
+        </Button>
+      </nav>
+
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       {info ? <p className="text-sm text-emerald-600">{info}</p> : null}
       {auditStatus ? <p className="text-sm text-blue-700">{auditStatus}</p> : null}
