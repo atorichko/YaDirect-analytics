@@ -213,6 +213,63 @@ def _keyword_overlap_excluded_by_negatives(
     return False
 
 
+def _keyword_phrase_minus_tokens(text: str) -> set[str]:
+    """Минус-слова, заданные прямо во фразе (токены с ведущим «-»)."""
+    raw_tokens = [item for item in str(text).lower().split() if item]
+    out: set[str] = set()
+    for token in raw_tokens:
+        if not token.startswith("-"):
+            continue
+        cleaned = re.sub(r"[^\wа-яА-Я0-9]", "", token[1:])
+        if cleaned:
+            out.add(cleaned)
+    return out
+
+
+def _minus_token_covers_positive_token(minus: str, positive: str) -> bool:
+    """Грубое совпадение корня (банк vs банки), чтобы не путать с явным кросс-минусом во фразе."""
+    if minus == positive:
+        return True
+    if len(minus) < 2 or len(positive) < 2:
+        return False
+    if positive.startswith(minus) or minus.startswith(positive):
+        return True
+    return False
+
+
+def _exclusive_tokens_covered_by_phrase_minus(exclusive: set[str], phrase_minus: set[str]) -> bool:
+    if not exclusive:
+        return False
+    for pos in exclusive:
+        if not any(_minus_token_covers_positive_token(m, pos) for m in phrase_minus):
+            return False
+    return True
+
+
+def _group_retargeting_lists_present(group: dict[str, Any]) -> bool:
+    for key in ("retargeting_lists", "RetargetingLists", "retargeting_list_ids"):
+        raw = group.get(key)
+        if isinstance(raw, list) and len(raw) > 0:
+            return True
+    return False
+
+
+def _campaign_is_retargeting_context(ctx: L1Context, campaign: dict[str, Any]) -> bool:
+    """Ретаргетинг: списки в группах и/или явное слово в названии кампании (fallback, если в снимке нет списков)."""
+    cid = str(campaign.get("id") or "")
+    if not cid:
+        return False
+    name = str(campaign.get("name") or "").lower()
+    if "ретаргетинг" in name or "retargeting" in name:
+        return True
+    for g in _groups_for_geo_rules(ctx):
+        if str(g.get("campaign_id")) != cid:
+            continue
+        if _group_retargeting_lists_present(g):
+            return True
+    return False
+
+
 def _first_ad_id_for_group(ctx: L1Context, group_id: str) -> str | None:
     for ad in ctx.ads:
         if str(ad.get("ad_group_id")) != str(group_id):
@@ -527,6 +584,8 @@ def _active_group_without_targeting(ctx: L1Context, rule: dict[str, Any]) -> lis
         if _group_autotargeting_enabled(group):
             continue
         if _group_active_audiences_count(group) > 0:
+            continue
+        if _group_retargeting_lists_present(group):
             continue
         output.append(
             FindingDraft(
@@ -1279,7 +1338,21 @@ def _duplicate_keywords_with_overlap(ctx: L1Context, rule: dict[str, Any]) -> li
             neg_right = _combined_negatives_campaign_group(camp_by_id.get(c_right), grp_by_id.get(g_right))
             if _keyword_overlap_excluded_by_negatives(left_tokens, right_tokens, neg_left, neg_right):
                 continue
+            phrase_minus_left = _keyword_phrase_minus_tokens(left_phrase)
+            phrase_minus_right = _keyword_phrase_minus_tokens(right_phrase)
+            only_l = left_tokens - right_tokens
+            only_r = right_tokens - left_tokens
+            if _exclusive_tokens_covered_by_phrase_minus(only_r, phrase_minus_left):
+                continue
+            if _exclusive_tokens_covered_by_phrase_minus(only_l, phrase_minus_right):
+                continue
             if c_left != c_right:
+                c_left_obj = camp_by_id.get(c_left) or {}
+                c_right_obj = camp_by_id.get(c_right) or {}
+                if _campaign_is_retargeting_context(ctx, c_left_obj) or _campaign_is_retargeting_context(
+                    ctx, c_right_obj
+                ):
+                    continue
                 geo_ok, _ = _campaign_pair_geo_targets_overlap(c_left, c_right, campaigns_active, groups_src)
                 if not geo_ok:
                     continue
@@ -1506,6 +1579,8 @@ def _campaign_self_competition_by_geo_and_semantics(ctx: L1Context, rule: dict[s
             geo_ok, geo_overlap = _campaign_pair_geo_targets_overlap(left_id, right_id, campaigns, groups_src)
             kw_overlap = left_kw & right_kw
             if not geo_ok or not kw_overlap:
+                continue
+            if _campaign_is_retargeting_context(ctx, left) or _campaign_is_retargeting_context(ctx, right):
                 continue
             lo, hi = sorted([left_id, right_id])
             attach_id = lo

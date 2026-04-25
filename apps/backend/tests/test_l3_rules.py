@@ -13,6 +13,23 @@ def test_invalid_url_syntax_rule() -> None:
     assert findings[0].evidence["validation_error"] == "invalid_syntax"
 
 
+def test_unresolved_placeholder_ignores_yandex_dynamic_macros() -> None:
+    rule = build_l3_rule_registry()["UNRESOLVED_PLACEHOLDER_IN_URL"]
+    ctx = L3Context(
+        account_id="acc1",
+        ads=[
+            {
+                "id": "a1",
+                "campaign_id": "c1",
+                "ad_group_id": "g1",
+                "url": "https://example.com/land?utm_term={keyword}&utm_source=yandex",
+            }
+        ],
+        extensions=[],
+    )
+    assert rule(ctx, {"recommendation_ru": "fix"}) == []
+
+
 def test_missing_required_utm_rule() -> None:
     rule = build_l3_rule_registry()["MISSING_REQUIRED_UTM"]
     ctx = L3Context(

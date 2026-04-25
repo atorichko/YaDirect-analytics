@@ -95,6 +95,9 @@ async def import_fixture(path: Path) -> dict:
                 "type": c.get("type") or c.get("strategy_type"),
                 "strategy_type": c.get("strategy_type"),
                 "metrika_counter_id": c.get("metrika_counter_id"),
+                "metrika_counter_ids": c.get("metrika_counter_ids") or [],
+                "metrika_counters": c.get("metrika_counters") or [],
+                "counter_ids": c.get("counter_ids") or c.get("CounterIds") or [],
                 "goal_ids": c.get("goal_ids") or [],
                 "daily_budget": c.get("daily_budget"),
                 "stats": c.get("stats") or {},
@@ -130,6 +133,7 @@ async def import_fixture(path: Path) -> dict:
                     "region_ids": _region_ids_list(g.get("region_ids")),
                     "negative_keywords": g.get("negative_keywords") or [],
                     "audiences": g.get("audiences") or [],
+                    "retargeting_lists": g.get("retargeting_lists") or g.get("RetargetingLists") or [],
                 }
                 for tk in ("tracking_url", "tracking_template", "campaign_tracking_url", "mobile_app_tracking_url", "href"):
                     if g.get(tk):

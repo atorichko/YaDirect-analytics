@@ -7,6 +7,11 @@ from typing import Any
 from urllib.parse import parse_qsl, urlparse
 
 from app.services.l1_rules import FindingDraft
+from app.services.yandex_direct_dynamic_url import (
+    filter_non_yandex_placeholders,
+    normalize_query_value_for_yandex_macros,
+    utm_pairs_with_yandex_macro_normalization,
+)
 
 _TECH_VALUES = {"", "undefined", "null", "none", "(not set)"}
 _PLACEHOLDER_RE = re.compile(r"(\{\{[^{}]+\}\}|\{[^{}]+\}|%[^%]+%|\[[^\[\]]+\]|<[^<>]+>)")
@@ -90,7 +95,8 @@ def _campaign_or_group_covers_required_utm(ctx: L3Context, ad: dict[str, Any], r
             continue
         for u in _tracking_like_urls_from_entity(camp):
             parsed = urlparse(u)
-            params = {k.lower(): v for k, v in parse_qsl(parsed.query, keep_blank_values=True)}
+            pairs = utm_pairs_with_yandex_macro_normalization(parse_qsl(parsed.query, keep_blank_values=True))
+            params = {k.lower(): v for k, v in pairs}
             if all(p.lower() in params for p in required):
                 return True
     for grp in ctx.groups:
@@ -101,7 +107,8 @@ def _campaign_or_group_covers_required_utm(ctx: L3Context, ad: dict[str, Any], r
             continue
         for u in _tracking_like_urls_from_entity(grp):
             parsed = urlparse(u)
-            params = {k.lower(): v for k, v in parse_qsl(parsed.query, keep_blank_values=True)}
+            pairs = utm_pairs_with_yandex_macro_normalization(parse_qsl(parsed.query, keep_blank_values=True))
+            params = {k.lower(): v for k, v in pairs}
             if all(p.lower() in params for p in required):
                 return True
     return False
@@ -185,7 +192,7 @@ def _account_utm_main_url_fingerprint(url: str) -> str:
     if parsed.scheme not in {"http", "https"}:
         return "scheme:not_http"
     raw_q = parsed.query or ""
-    raw_pairs = parse_qsl(raw_q, keep_blank_values=True)
+    raw_pairs = utm_pairs_with_yandex_macro_normalization(parse_qsl(raw_q, keep_blank_values=True))
     errs = _utm_error_codes(raw_q, raw_pairs)
     if errs:
         return f"broken:{','.join(errs[:4])}"
@@ -261,7 +268,8 @@ def _utm_error_codes(raw_query: str, raw_pairs: list[tuple[str, str]]) -> list[s
         if k == "" or lk == "":
             codes.append("empty_param_name")
             continue
-        if str(v).strip().lower() in _TECH_VALUES:
+        v_norm = normalize_query_value_for_yandex_macros(str(v))
+        if str(v_norm).strip().lower() in _TECH_VALUES:
             codes.append(f"empty_value:{lk}")
     for lk in sorted({x for x in keys_lower if x}):
         if keys_lower.count(lk) > 1:
@@ -334,7 +342,8 @@ def _missing_required_utm(ctx: L3Context, rule: dict[str, Any]) -> list[FindingD
     for ad in ctx.ads:
         for field, value, sitelink_id in _collect_ad_urls(ad):
             parsed = urlparse(value)
-            params = {k.lower(): v for k, v in parse_qsl(parsed.query, keep_blank_values=True)}
+            pairs_cmp = utm_pairs_with_yandex_macro_normalization(parse_qsl(parsed.query, keep_blank_values=True))
+            params = {k.lower(): v for k, v in pairs_cmp}
             missing = [param for param in required if param.lower() not in params]
             if not missing:
                 continue
@@ -382,7 +391,8 @@ def _invalid_utm(ctx: L3Context, rule: dict[str, Any]) -> list[FindingDraft]:
             parsed = urlparse(value)
             raw_q = parsed.query or ""
             raw_pairs = parse_qsl(raw_q, keep_blank_values=True)
-            err_codes = _utm_error_codes(raw_q, raw_pairs)
+            pairs_cmp = utm_pairs_with_yandex_macro_normalization(raw_pairs)
+            err_codes = _utm_error_codes(raw_q, pairs_cmp)
             if not err_codes:
                 continue
             details: list[dict[str, str]] = []
@@ -551,7 +561,8 @@ def _unresolved_placeholder_in_url(ctx: L3Context, rule: dict[str, Any]) -> list
     out: list[FindingDraft] = []
     for ad in ctx.ads:
         for field, value, sitelink_id in _collect_ad_urls(ad):
-            matched = _PLACEHOLDER_RE.findall(value)
+            matched_all = _PLACEHOLDER_RE.findall(value)
+            matched = filter_non_yandex_placeholders(matched_all)
             if not matched:
                 continue
             ek = f"ad:{ad.get('id')}:{field}:placeholder"
@@ -565,6 +576,10 @@ def _unresolved_placeholder_in_url(ctx: L3Context, rule: dict[str, Any]) -> list
                 "url_highlight_segments": _url_placeholder_highlight(value, matched),
                 "matched_placeholder": matched[0] if len(matched) == 1 else matched,
                 "matched_placeholders": matched,
+                "yandex_dynamic_placeholders_ignored_ru": (
+                    "Плейсхолдеры подстановки Яндекс Директа `{…}` из официального списка динамических "
+                    "параметров не считаются ошибкой и в список проблемных не попадают."
+                ),
                 "issue_explanation_ru": (
                     "В URL остался нераскрытый макрос/плейсхолдер — переход может вести на неверный адрес."
                 ),
@@ -591,7 +606,9 @@ def _inconsistent_utm_within_each_ad(ctx: L3Context, rule: dict[str, Any]) -> li
         by_key: dict[str, set[str]] = {k: set() for k in _STRICT_UTM_KEYS}
         for _field, value, _sid in _collect_ad_urls(ad):
             parsed = urlparse(value)
-            for k, v in parse_qsl(parsed.query, keep_blank_values=True):
+            for k, v in utm_pairs_with_yandex_macro_normalization(
+                parse_qsl(parsed.query, keep_blank_values=True)
+            ):
                 lk = k.lower()
                 if lk not in _STRICT_UTM_KEYS:
                     continue

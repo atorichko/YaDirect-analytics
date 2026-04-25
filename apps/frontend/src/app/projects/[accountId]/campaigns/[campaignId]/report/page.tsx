@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { AppSectionNav } from "@/components/app-section-nav";
 import { Button } from "@/components/ui/button";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { getAccessToken } from "@/lib/auth";
 import { ruleTitleRu } from "@/lib/rule-titles-ru";
+import { dnaAccountHref, dnaBannerHref, dnaCampaignHref, dnaGroupHref } from "@/lib/yandex-dna-links";
 
 import {
   AiVerdictPanel,
@@ -32,6 +33,15 @@ type JobStatus = {
 };
 
 type Finding = CampaignFinding;
+
+type AdAccountRow = { id: string; login: string };
+
+type EvidenceLinkCtx = {
+  yandexLogin: string | null;
+  pageCampaignId: string;
+  row: Finding;
+  ev: Record<string, unknown>;
+};
 
 type ActiveCatalogRule = {
   rule_code: string;
@@ -149,8 +159,61 @@ const EVIDENCE_SEGMENT_KEYS = new Set([
   "text_highlight_segments",
 ]);
 
-function formatEvidenceValue(key: string, v: unknown): React.ReactNode {
+function tryScalarDnaLink(key: string, v: unknown, ctx: EvidenceLinkCtx): ReactNode | null {
+  const login = ctx.yandexLogin;
+  if (!login || typeof v !== "string") return null;
+  const id = v.trim();
+  if (!/^\d+$/.test(id)) return null;
+  const ev = ctx.ev;
+  const row = ctx.row;
+
+  const aCls = "text-blue-700 underline underline-offset-2";
+  if (key === "campaign_id" || key === "left_campaign_id" || key === "right_campaign_id") {
+    return (
+      <a className={aCls} href={dnaCampaignHref(login, id)} target="_blank" rel="noreferrer">
+        {id}
+      </a>
+    );
+  }
+  if (key === "group_id" || key === "left_group_id" || key === "right_group_id") {
+    let cid = "";
+    if (key === "left_group_id") {
+      cid = String(
+        ev.left_campaign_id ?? ev.campaign_id ?? row.campaign_external_id ?? ctx.pageCampaignId ?? "",
+      ).trim();
+    } else if (key === "right_group_id") {
+      cid = String(
+        ev.right_campaign_id ?? ev.campaign_id ?? row.campaign_external_id ?? ctx.pageCampaignId ?? "",
+      ).trim();
+    } else {
+      cid = String(ev.campaign_id ?? row.campaign_external_id ?? ctx.pageCampaignId ?? "").trim();
+    }
+    if (!cid || !/^\d+$/.test(cid)) return null;
+    return (
+      <a className={aCls} href={dnaGroupHref(login, cid, id)} target="_blank" rel="noreferrer">
+        {id}
+      </a>
+    );
+  }
+  if (key === "ad_id") {
+    const cid = String(row.campaign_external_id ?? ev.campaign_id ?? ctx.pageCampaignId ?? "").trim();
+    const gid = String(row.group_external_id ?? ev.group_id ?? "").trim();
+    if (!cid || !gid || !/^\d+$/.test(cid) || !/^\d+$/.test(gid)) return null;
+    return (
+      <a className={aCls} href={dnaBannerHref(login, cid, gid, id)} target="_blank" rel="noreferrer">
+        {id}
+      </a>
+    );
+  }
+  return null;
+}
+
+function formatEvidenceValue(key: string, v: unknown, linkCtx?: EvidenceLinkCtx): ReactNode {
   if (v === null || v === undefined) return "—";
+  if (linkCtx?.yandexLogin && typeof v === "string") {
+    const linked = tryScalarDnaLink(key, v, linkCtx);
+    if (linked) return linked;
+  }
   if (
     EVIDENCE_SEGMENT_KEYS.has(key) &&
     Array.isArray(v) &&
@@ -260,7 +323,72 @@ function formatEvidenceValue(key: string, v: unknown): React.ReactNode {
   return String(v);
 }
 
-function EvidenceBlock({ row }: { row: Finding }) {
+function reportRowLocLinks(row: DisplayRow, pageCampaignId: string, login: string | null): ReactNode {
+  const aCls = "text-blue-700 underline underline-offset-2";
+  const parts: ReactNode[] = [];
+  if (row.campaign_external_id) {
+    const cid = String(row.campaign_external_id);
+    parts.push(
+      login && /^\d+$/.test(cid) ? (
+        <a key="c" className={aCls} href={dnaCampaignHref(login, cid)} target="_blank" rel="noreferrer">
+          камп. {cid}
+        </a>
+      ) : (
+        <span key="c">камп. {cid}</span>
+      ),
+    );
+  } else if (row.issue_location?.startsWith("account:")) {
+    parts.push(<span key="a">{row.issue_location}</span>);
+  }
+  if (row.group_external_id) {
+    const gid = String(row.group_external_id);
+    const cid = String(row.campaign_external_id ?? pageCampaignId);
+    parts.push(
+      login && /^\d+$/.test(cid) && /^\d+$/.test(gid) ? (
+        <a key="g" className={aCls} href={dnaGroupHref(login, cid, gid)} target="_blank" rel="noreferrer">
+          гр. {gid}
+        </a>
+      ) : (
+        <span key="g">гр. {gid}</span>
+      ),
+    );
+  }
+  if (row.ad_external_id) {
+    const aid = String(row.ad_external_id);
+    const cid = String(row.campaign_external_id ?? pageCampaignId);
+    const gid = String(row.group_external_id ?? "");
+    parts.push(
+      login && /^\d+$/.test(cid) && /^\d+$/.test(gid) && /^\d+$/.test(aid) ? (
+        <a key="b" className={aCls} href={dnaBannerHref(login, cid, gid, aid)} target="_blank" rel="noreferrer">
+          объявл. {aid}
+        </a>
+      ) : (
+        <span key="b">объявл. {aid}</span>
+      ),
+    );
+  }
+  if (!parts.length) return null;
+  return (
+    <>
+      {parts.map((p, i) => (
+        <span key={i}>
+          {i > 0 ? ", " : null}
+          {p}
+        </span>
+      ))}
+    </>
+  );
+}
+
+function EvidenceBlock({
+  row,
+  yandexClientLogin,
+  pageCampaignId,
+}: {
+  row: Finding;
+  yandexClientLogin: string | null;
+  pageCampaignId: string;
+}) {
   const ev = row.evidence ?? undefined;
   if (!ev || Object.keys(ev).length === 0) {
     return <p className="text-xs text-muted-foreground">Нет структурированных подсказок по объектам.</p>;
@@ -277,7 +405,19 @@ function EvidenceBlock({ row }: { row: Finding }) {
         <div>
           <dt className="font-medium text-foreground">Кампания</dt>
           <dd className="text-muted-foreground">
-            {campaignId} / {campaignName}
+            {yandexClientLogin && /^\d+$/.test(campaignId) ? (
+              <a
+                className="text-blue-700 underline underline-offset-2"
+                href={dnaCampaignHref(yandexClientLogin, campaignId)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {campaignId}
+              </a>
+            ) : (
+              campaignId
+            )}{" "}
+            / {campaignName}
           </dd>
         </div>
         <div>
@@ -294,10 +434,16 @@ function EvidenceBlock({ row }: { row: Finding }) {
       <dl className="space-y-2 text-xs">
         {Object.entries(ev).map(([k, v]) => {
           if (v === null || v === undefined || v === "") return null;
+          const linkCtx: EvidenceLinkCtx = {
+            yandexLogin: yandexClientLogin,
+            pageCampaignId,
+            row,
+            ev: ev as Record<string, unknown>,
+          };
           return (
             <div key={k}>
               <dt className="font-medium text-foreground">{evidenceLabel(k)}</dt>
-              <dd className="text-muted-foreground">{formatEvidenceValue(k, v)}</dd>
+              <dd className="text-muted-foreground">{formatEvidenceValue(k, v, linkCtx)}</dd>
             </div>
           );
         })}
@@ -321,6 +467,7 @@ export default function CampaignReportPage() {
   const [auditStatus, setAuditStatus] = useState<string | null>(null);
   const [auditRunning, setAuditRunning] = useState(false);
   const [catalogRecommendations, setCatalogRecommendations] = useState<Record<string, string>>({});
+  const [yandexClientLogin, setYandexClientLogin] = useState<string | null>(null);
   const levels = ["L1", "L2", "L3", "AI"] as const;
 
   useEffect(() => {
@@ -331,13 +478,16 @@ export default function CampaignReportPage() {
   }, [campaignId, campaignName]);
 
   async function loadReport(activeToken: string) {
-    const [findings, campaigns, activeCatalog] = await Promise.all([
+    const [findings, campaigns, activeCatalog, accounts] = await Promise.all([
       apiGet<Finding[]>(`/findings?account_id=${accountId}&campaign_id=${encodeURIComponent(campaignId)}&limit=500`, activeToken),
       apiGet<Campaign[]>(`/ad-accounts/${accountId}/campaigns`, activeToken),
       apiGet<ActiveCatalogResponse>("/rule-catalogs/active", activeToken),
+      apiGet<AdAccountRow[]>("/ad-accounts", activeToken),
     ]);
     setRows(findings);
     setCampaignName(campaigns.find((x) => x.id === campaignId)?.name ?? null);
+    const acc = accounts.find((a) => a.id === accountId);
+    setYandexClientLogin(acc?.login?.trim() ? acc.login.trim() : null);
     const recMap: Record<string, string> = {};
     for (const rule of activeCatalog.rules ?? []) {
       const text = String(rule.fix_recommendation ?? "").trim();
@@ -484,7 +634,35 @@ export default function CampaignReportPage() {
             / <span>Отчет кампании</span>
           </p>
           <h1 className="text-2xl font-semibold tracking-tight">Отчет кампании: {campaignName ?? campaignId}</h1>
-          <p className="text-sm text-muted-foreground">ID кампании: {campaignId}</p>
+          <p className="text-sm text-muted-foreground">
+            ID кампании:{" "}
+            {yandexClientLogin && /^\d+$/.test(campaignId) ? (
+              <a
+                className="text-blue-700 underline underline-offset-2"
+                href={dnaCampaignHref(yandexClientLogin, campaignId)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {campaignId}
+              </a>
+            ) : (
+              campaignId
+            )}
+            {yandexClientLogin ? (
+              <>
+                {" "}
+                ·{" "}
+                <a
+                  className="text-blue-700 underline underline-offset-2"
+                  href={dnaAccountHref(yandexClientLogin)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Аккаунт в Директе
+                </a>
+              </>
+            ) : null}
+          </p>
         </div>
         <AppSectionNav
           trailing={
@@ -546,14 +724,7 @@ export default function CampaignReportPage() {
             {displayRows.map((row) => {
               const title = ruleTitleRu(row.rule_code, row.rule_name);
               const groupedLayout = rowUsesGroupedLayout(row);
-              const loc = [
-                row.campaign_external_id ? `камп. ${row.campaign_external_id}` : null,
-                !row.campaign_external_id && row.issue_location?.startsWith("account:") ? row.issue_location : null,
-                row.group_external_id ? `гр. ${row.group_external_id}` : null,
-                row.ad_external_id ? `объявл. ${row.ad_external_id}` : null,
-              ]
-                .filter(Boolean)
-                .join(", ");
+              const locNode = reportRowLocLinks(row, campaignId, yandexClientLogin);
               return (
                 <tr key={groupedLayout ? `grp:${row.rule_code}:${campaignId}` : row.id} className="border-t">
                   <td className="px-3 py-2 align-top">
@@ -566,8 +737,10 @@ export default function CampaignReportPage() {
                           <span className={row.status === "existing" ? "text-xs font-semibold text-red-600" : "text-xs text-muted-foreground"}>
                             {statusRu(row.status)}
                           </span>
-                          {loc && !groupedLayout && row.rule_code !== RULE_ACTIVE_CAMPAIGN_WITHOUT_ACTIVE_GROUPS ? (
-                            <span className="text-xs text-blue-800">Объекты: {loc}</span>
+                          {locNode && !groupedLayout && row.rule_code !== RULE_ACTIVE_CAMPAIGN_WITHOUT_ACTIVE_GROUPS ? (
+                            <span className="text-xs text-blue-800">
+                              Объекты: {locNode}
+                            </span>
                           ) : null}
                           <span className="ml-auto text-xs text-muted-foreground">
                             {new Date(row.created_at).toLocaleString("ru-RU")}
@@ -580,13 +753,21 @@ export default function CampaignReportPage() {
                         {groupedLayout ? (
                           <>
                             <p className="text-sm">{recommendationText(row, catalogRecommendations)}</p>
-                            <GroupedDetailsSection row={row} />
+                            <GroupedDetailsSection
+                              row={row}
+                              yandexLogin={yandexClientLogin}
+                              pageCampaignId={campaignId}
+                            />
                           </>
                         ) : (
                           <>
                             <p className="text-sm">{catalogRecommendations[row.rule_code] ?? row.recommendation_ru}</p>
                             <p className="mt-2 text-xs font-medium text-muted-foreground">Детали (снимок аудита)</p>
-                            <EvidenceBlock row={row} />
+                            <EvidenceBlock
+                              row={row}
+                              yandexClientLogin={yandexClientLogin}
+                              pageCampaignId={campaignId}
+                            />
                           </>
                         )}
                       </div>

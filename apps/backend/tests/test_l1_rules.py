@@ -240,6 +240,26 @@ def test_campaign_self_competition_uses_account_keyword_scope() -> None:
     assert {findings[0].evidence["left_campaign_id"], findings[0].evidence["right_campaign_id"]} == {"C200", "C300"}
 
 
+def test_campaign_self_competition_skipped_when_campaign_name_has_retargeting() -> None:
+    rule = build_l1_rule_registry()["CAMPAIGN_SELF_COMPETITION_BY_GEO_AND_SEMANTICS"]
+    phrase = "купить квартиру москва"
+    ctx = L1Context(
+        account_id="acc",
+        campaigns=[
+            {"id": "C200", "status": "active", "name": "поиск бренд"},
+            {"id": "C300", "status": "active", "name": "рся ретаргетинг квиз"},
+        ],
+        groups=[],
+        ads=[],
+        keywords=[
+            {"id": "k1", "campaign_id": "C200", "ad_group_id": "g1", "text": phrase, "state": "on"},
+            {"id": "k2", "campaign_id": "C300", "ad_group_id": "g2", "text": phrase, "state": "on"},
+        ],
+        extensions=[],
+    )
+    assert rule(ctx, {}) == []
+
+
 def test_campaign_self_competition_fires_when_geo_missing_in_snapshot() -> None:
     """Production snapshots may lack geo/RegionIds; do not suppress semantic overlap."""
     rule = build_l1_rule_registry()["CAMPAIGN_SELF_COMPETITION_BY_GEO_AND_SEMANTICS"]
@@ -317,6 +337,36 @@ def test_campaign_self_competition_no_finding_when_geo_disjoint_by_region_ids() 
             {"id": "g2", "campaign_id": "C300", "region_ids": [2]},
         ],
         scoped_campaign_external_id="C200",
+    )
+    assert rule(ctx, {}) == []
+
+
+def test_duplicate_keywords_with_overlap_suppressed_by_phrase_minus_stem() -> None:
+    rule = build_l1_rule_registry()["DUPLICATE_KEYWORDS_WITH_OVERLAP"]
+    ctx = L1Context(
+        account_id="a",
+        campaigns=[{"id": "c1", "status": "active"}],
+        groups=[{"id": "g1", "campaign_id": "c1", "status": "active"}],
+        ads=[],
+        keywords=[
+            {
+                "id": "k1",
+                "campaign_id": "c1",
+                "ad_group_id": "g1",
+                "phrase": "банки ипотека",
+                "text": "банки ипотека",
+                "state": "on",
+            },
+            {
+                "id": "k2",
+                "campaign_id": "c1",
+                "ad_group_id": "g1",
+                "phrase": "ипотека -банк",
+                "text": "ипотека -банк",
+                "state": "on",
+            },
+        ],
+        extensions=[],
     )
     assert rule(ctx, {}) == []
 

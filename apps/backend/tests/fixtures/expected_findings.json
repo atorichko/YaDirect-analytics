@@ -281,46 +281,6 @@
       }
     },
     {
-      "finding_key": "A20011_UNRESOLVED_PLACEHOLDER_IN_URL",
-      "rule_code": "UNRESOLVED_PLACEHOLDER_IN_URL",
-      "level": "L1",
-      "severity": "critical",
-      "source": "deterministic",
-      "status": "new",
-      "entity_type": "url",
-      "refs": {
-        "account_id": "acc_001",
-        "campaign_id": "C200",
-        "group_id": "G2001",
-        "ad_id": "A20011",
-        "url_field": "ad.url"
-      },
-      "evidence_contains": {
-        "ad_id": "A20011",
-        "matched_placeholder": "{campaign_id}"
-      }
-    },
-    {
-      "finding_key": "A20012_UNRESOLVED_PLACEHOLDER_IN_URL",
-      "rule_code": "UNRESOLVED_PLACEHOLDER_IN_URL",
-      "level": "L1",
-      "severity": "critical",
-      "source": "deterministic",
-      "status": "new",
-      "entity_type": "url",
-      "refs": {
-        "account_id": "acc_001",
-        "campaign_id": "C200",
-        "group_id": "G2001",
-        "ad_id": "A20012",
-        "url_field": "ad.url"
-      },
-      "evidence_contains": {
-        "ad_id": "A20012",
-        "matched_placeholder": "{campaign_id}"
-      }
-    },
-    {
       "finding_key": "G2002_ACTIVE_GROUP_WITHOUT_TARGETING",
       "rule_code": "ACTIVE_GROUP_WITHOUT_TARGETING",
       "level": "L1",
@@ -1375,7 +1335,7 @@
         "url_field": "ad.url"
       },
       "evidence_contains": {
-        "utm_validation_errors": ["duplicate_param:utm_campaign", "empty_value:utm_campaign", "malformed_separator"]
+        "utm_validation_errors": ["duplicate_param:utm_campaign", "empty_value:utm_campaign", "malformed_separator", "empty_value:price"]
       }
     },
     {

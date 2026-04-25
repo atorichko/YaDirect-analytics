@@ -18,6 +18,18 @@ def test_campaign_without_metrika_counter_rule() -> None:
         campaigns=[{"id": "c1", "status": "active", "metrika_counter_id": "123"}],
     )
     assert rule(ctx_ok, {}) == []
+    ctx_multi = L2Context(
+        account_id="acc1",
+        campaigns=[
+            {
+                "id": "c1",
+                "status": "active",
+                "metrika_counter_id": None,
+                "metrika_counter_ids": ["111", "222"],
+            },
+        ],
+    )
+    assert rule(ctx_multi, {}) == []
 
 
 def test_campaign_without_metrika_goals_rule() -> None:

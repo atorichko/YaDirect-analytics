@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.services.l1_rules import FindingDraft, _is_active_yandex_campaign
+from app.services.yandex_direct_dynamic_url import metrika_counter_ids_from_campaign
 
 
 @dataclass(slots=True)
@@ -22,13 +23,6 @@ def _is_conversion_strategy(strategy: Any) -> bool:
     return "conversion" in value or "конверс" in value or "cpa" in value or "target_cpa" in value
 
 
-def _metrika_counter_missing(value: Any) -> bool:
-    if value is None:
-        return True
-    s = str(value).strip().lower()
-    return s in {"", "none", "null", "0"}
-
-
 def _goal_is_unavailable(goal: dict[str, Any]) -> bool:
     status = str(goal.get("status") or "").lower()
     access = str(goal.get("access") or "").lower()
@@ -41,7 +35,8 @@ def _campaign_without_metrika_counter(ctx: L2Context, rule: dict[str, Any]) -> l
     for campaign in ctx.campaigns:
         if not _is_active_yandex_campaign(campaign):
             continue
-        if not _metrika_counter_missing(campaign.get("metrika_counter_id")):
+        counter_ids = metrika_counter_ids_from_campaign(campaign)
+        if counter_ids:
             continue
         campaign_id = str(campaign.get("id"))
         out.append(
@@ -70,7 +65,7 @@ def _campaign_without_metrika_goals(ctx: L2Context, rule: dict[str, Any]) -> lis
     for campaign in ctx.campaigns:
         if not _is_active_yandex_campaign(campaign):
             continue
-        if _metrika_counter_missing(campaign.get("metrika_counter_id")):
+        if not metrika_counter_ids_from_campaign(campaign):
             continue
         goal_ids = campaign.get("goal_ids")
         if isinstance(goal_ids, list) and len(goal_ids) > 0:
@@ -104,7 +99,7 @@ def _conversion_strategy_without_metrika(ctx: L2Context, rule: dict[str, Any]) -
     for campaign in ctx.campaigns:
         if not _is_conversion_strategy(campaign.get("strategy_type")):
             continue
-        if not _metrika_counter_missing(campaign.get("metrika_counter_id")):
+        if metrika_counter_ids_from_campaign(campaign):
             continue
         campaign_id = str(campaign.get("id"))
         out.append(

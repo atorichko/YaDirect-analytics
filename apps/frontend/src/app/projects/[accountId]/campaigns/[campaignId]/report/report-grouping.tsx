@@ -1,4 +1,6 @@
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
+
+import { dnaBannerHref, dnaCampaignHref, dnaGroupHref } from "@/lib/yandex-dna-links";
 
 export type CampaignFinding = {
   id: string;
@@ -298,19 +300,88 @@ function formatGenericBullet(row: CampaignFinding): string {
   return row.issue_location;
 }
 
-export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElement {
+function DnaExternalLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a href={href} target="_blank" rel="noreferrer" className="text-blue-700 underline underline-offset-2">
+      {children}
+    </a>
+  );
+}
+
+export function GroupedDetailsSection({
+  row,
+  yandexLogin,
+  pageCampaignId,
+}: {
+  row: DisplayRow;
+  yandexLogin: string | null;
+  pageCampaignId: string;
+}): ReactElement {
   const rows = row.mergedSourceRows ?? [];
   const sorted = [...rows].sort((a, b) => bulletSortKey(a).localeCompare(bulletSortKey(b)));
 
+  function renderLinkedAdTitle(item: CampaignFinding, ev: Record<string, unknown>): ReactNode {
+    const adId = String(item.ad_external_id ?? ev.ad_id ?? "").trim();
+    const cid = String(item.campaign_external_id ?? ev.campaign_id ?? pageCampaignId ?? "").trim();
+    const gid = String(item.group_external_id ?? ev.group_id ?? "").trim();
+    if (!adId) return <>Объявление —</>;
+    if (yandexLogin && /^\d+$/.test(cid) && /^\d+$/.test(gid) && /^\d+$/.test(adId)) {
+      return (
+        <>
+          Объявление <DnaExternalLink href={dnaBannerHref(yandexLogin, cid, gid, adId)}>{adId}</DnaExternalLink>
+        </>
+      );
+    }
+    return <>Объявление {adId}</>;
+  }
+
+  function renderLinkedGroupLabel(groupId: string, campaignIdForLink: string, suffix?: string): ReactNode {
+    const cid = campaignIdForLink.trim();
+    const gid = groupId.trim();
+    if (yandexLogin && /^\d+$/.test(cid) && /^\d+$/.test(gid)) {
+      return (
+        <>
+          Группа <DnaExternalLink href={dnaGroupHref(yandexLogin, cid, gid)}>{gid}</DnaExternalLink>
+          {suffix ?? ""}
+        </>
+      );
+    }
+    return (
+      <>
+        Группа {gid}
+        {suffix ?? ""}
+      </>
+    );
+  }
+
+  function renderLinkedCampaignId(campaignId: string, display?: string): ReactNode {
+    const cid = campaignId.trim();
+    const label = (display ?? cid).trim();
+    if (yandexLogin && /^\d+$/.test(cid)) {
+      return <DnaExternalLink href={dnaCampaignHref(yandexLogin, cid)}>{label}</DnaExternalLink>;
+    }
+    return <>{label}</>;
+  }
+
   if (row.rule_code === "ACTIVE_AD_REJECTED_OR_RESTRICTED") {
-    const byAd = new Map<string, { adId: string; adTitle: string }>();
+    const byAd = new Map<
+      string,
+      { adId: string; adTitle: string; campaignId: string; groupId: string }
+    >();
     for (const item of sorted) {
       const adIdRaw = item.ad_external_id ?? item.evidence?.ad_id;
       if (!adIdRaw) continue;
       const adId = String(adIdRaw);
       const adTitleRaw = item.evidence?.ad_title;
       const adTitle = String(adTitleRaw ?? "").trim() || "Название объявления недоступно";
-      if (!byAd.has(adId)) byAd.set(adId, { adId, adTitle });
+      if (!byAd.has(adId)) {
+        byAd.set(adId, {
+          adId,
+          adTitle,
+          campaignId: String(item.campaign_external_id ?? pageCampaignId ?? ""),
+          groupId: String(item.group_external_id ?? ""),
+        });
+      }
     }
     const list = Array.from(byAd.values()).sort((a, b) => a.adId.localeCompare(b.adId));
     return (
@@ -321,7 +392,22 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
           <ul className="mt-1 list-inside list-disc">
             {list.map((item) => (
               <li key={item.adId}>
-                {item.adId} - {item.adTitle}
+                {yandexLogin &&
+                /^\d+$/.test(item.campaignId) &&
+                /^\d+$/.test(item.groupId) &&
+                /^\d+$/.test(item.adId) ? (
+                  <>
+                    <DnaExternalLink href={dnaBannerHref(yandexLogin, item.campaignId, item.groupId, item.adId)}>
+                      {item.adId}
+                    </DnaExternalLink>
+                    {" — "}
+                    {item.adTitle}
+                  </>
+                ) : (
+                  <>
+                    {item.adId} — {item.adTitle}
+                  </>
+                )}
               </li>
             ))}
           </ul>
@@ -349,7 +435,7 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
           <ul className="mt-1 list-inside list-disc">
             {list.map((item) => (
               <li key={item.groupId}>
-                {item.groupId} - {item.groupName}
+                {renderLinkedGroupLabel(item.groupId, pageCampaignId, ` — ${item.groupName}`)}
               </li>
             ))}
           </ul>
@@ -362,7 +448,7 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
     type Conflict = { keyword_id: string; phrase: string; minus_tokens: string[] };
     const byGroup = new Map<
       string,
-      { groupId: string; groupName: string; duplicates: string[]; conflicts: Conflict[] }
+      { groupId: string; groupName: string; campaignId: string; duplicates: string[]; conflicts: Conflict[] }
     >();
     for (const item of sorted) {
       const gidRaw = item.group_external_id ?? item.evidence?.group_id;
@@ -375,6 +461,7 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
       const cur = byGroup.get(groupId) ?? {
         groupId,
         groupName,
+        campaignId: String(item.campaign_external_id ?? item.evidence?.campaign_id ?? pageCampaignId ?? ""),
         duplicates: [] as string[],
         conflicts: [] as Conflict[],
       };
@@ -397,7 +484,7 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
             return (
               <div key={g.groupId}>
                 <p className="font-medium">
-                  Группа {g.groupId} — {g.groupName}
+                  {renderLinkedGroupLabel(g.groupId, g.campaignId || pageCampaignId, ` — ${g.groupName}`)}
                 </p>
                 {dupUnique.length > 0 && (
                   <>
@@ -436,7 +523,6 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
         <div className="mt-1 space-y-3 text-sm text-foreground">
           {sorted.map((r) => {
             const ev = r.evidence ?? {};
-            const adId = String(r.ad_external_id ?? ev.ad_id ?? "");
             const title = String(ev.ad_title ?? "").trim();
             const detail = String(ev.conflict_detail_ru ?? "").trim();
             const targeting = String(ev.campaign_targeting_summary_ru ?? "").trim();
@@ -444,7 +530,7 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
             return (
               <div key={r.id} className="rounded-md border border-border/60 bg-muted/20 px-2 py-2">
                 <p className="font-medium">
-                  {adId ? `Объявление ${adId}` : "Объявление"}
+                  {renderLinkedAdTitle(r, ev)}
                   {title ? ` — ${title}` : ""}
                 </p>
                 {mentioned ? (
@@ -491,7 +577,19 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
             const gids = (ev.geo_overlap as string[] | undefined) ?? [];
             return (
               <li key={r.id}>
-                {pairLine}
+                {label ? (
+                  <p className="font-medium">{label}</p>
+                ) : lname && rname && lid && rid ? (
+                  <p className="font-medium">
+                    Кампании «{lname}» ({renderLinkedCampaignId(lid)}) и «{rname}» ({renderLinkedCampaignId(rid)})
+                  </p>
+                ) : lid && rid ? (
+                  <p className="font-medium">
+                    Кампании {renderLinkedCampaignId(lid)} ↔ {renderLinkedCampaignId(rid)}
+                  </p>
+                ) : (
+                  <p className="font-medium">{pairLine}</p>
+                )}
                 {gids.length > 0 ? (
                   <p className="mt-0.5 text-xs text-muted-foreground">Пересечение гео (id/метки): {gids.join(", ")}</p>
                 ) : null}
@@ -531,13 +629,41 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
             const cid = String(ev.campaign_id ?? "");
             return (
               <div key={r.id} className="rounded-md border border-border/50 px-2 py-2">
-                <p className="font-medium">Кампания {cid}</p>
+                <p className="font-medium">
+                  Кампания {cid ? renderLinkedCampaignId(cid) : "—"}
+                </p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  Группа А: {String(ev.left_group_id ?? "")}
+                  Группа А:{" "}
+                  {yandexLogin &&
+                  /^\d+$/.test((cid || pageCampaignId).trim()) &&
+                  /^\d+$/.test(String(ev.left_group_id ?? "").trim()) ? (
+                    <DnaExternalLink
+                      href={dnaGroupHref(yandexLogin, (cid || pageCampaignId).trim(), String(ev.left_group_id ?? "").trim())}
+                    >
+                      {String(ev.left_group_id ?? "")}
+                    </DnaExternalLink>
+                  ) : (
+                    String(ev.left_group_id ?? "")
+                  )}
                   {lg ? ` — «${lg}»` : ""}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Группа Б: {String(ev.right_group_id ?? "")}
+                  Группа Б:{" "}
+                  {yandexLogin &&
+                  /^\d+$/.test((cid || pageCampaignId).trim()) &&
+                  /^\d+$/.test(String(ev.right_group_id ?? "").trim()) ? (
+                    <DnaExternalLink
+                      href={dnaGroupHref(
+                        yandexLogin,
+                        (cid || pageCampaignId).trim(),
+                        String(ev.right_group_id ?? "").trim(),
+                      )}
+                    >
+                      {String(ev.right_group_id ?? "")}
+                    </DnaExternalLink>
+                  ) : (
+                    String(ev.right_group_id ?? "")
+                  )}
                   {rg ? ` — «${rg}»` : ""}
                 </p>
                 {summary ? <p className="mt-1 text-xs text-muted-foreground">{summary}</p> : null}
@@ -569,12 +695,13 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
         <ul className="mt-1 list-inside list-disc space-y-2 text-sm text-foreground">
           {sorted.map((r) => {
             const ev = r.evidence ?? {};
-            const adId = String(r.ad_external_id ?? ev.sample_ad_id ?? ev.ad_id ?? "");
             const phrase = String(ev.keyword_phrase ?? ev.keyword_text ?? "");
             const minus = String(ev.conflicting_minus_word ?? ev.conflicting_negative ?? "");
             return (
               <li key={r.id}>
-                {adId ? <p className="font-medium">Объявление {adId}</p> : null}
+                {r.ad_external_id || ev.ad_id ? (
+                  <p className="font-medium">{renderLinkedAdTitle(r, ev)}</p>
+                ) : null}
                 <p className="mt-0.5 text-xs">
                   Ключевая фраза: <span className="font-medium">«{phrase}»</span>
                 </p>
@@ -603,10 +730,39 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
             const rg = String(ev.right_group_id ?? "");
             const lc = String(ev.left_campaign_id ?? "");
             const rc = String(ev.right_campaign_id ?? "");
-            let prefix = "";
-            if (kind === "cross_campaign") prefix = `Кампании ${lc} ↔ ${rc}: `;
-            else if (kind === "cross_group") prefix = `Группы ${lg} ↔ ${rg}: `;
-            else if (lg) prefix = `Группа ${lg}: `;
+            let prefix: ReactNode = "";
+            if (kind === "cross_campaign") {
+              prefix =
+                yandexLogin && /^\d+$/.test(lc) && /^\d+$/.test(rc) ? (
+                  <>
+                    Кампании {renderLinkedCampaignId(lc)} ↔ {renderLinkedCampaignId(rc)}:{" "}
+                  </>
+                ) : (
+                  `Кампании ${lc} ↔ ${rc}: `
+                );
+            } else if (kind === "cross_group") {
+              const ccmp = String(r.campaign_external_id ?? pageCampaignId ?? "");
+              prefix =
+                yandexLogin && /^\d+$/.test(ccmp) && /^\d+$/.test(lg) && /^\d+$/.test(rg) ? (
+                  <>
+                    Группы{" "}
+                    <DnaExternalLink href={dnaGroupHref(yandexLogin, ccmp, lg)}>{lg}</DnaExternalLink> ↔{" "}
+                    <DnaExternalLink href={dnaGroupHref(yandexLogin, ccmp, rg)}>{rg}</DnaExternalLink>:{" "}
+                  </>
+                ) : (
+                  `Группы ${lg} ↔ ${rg}: `
+                );
+            } else if (lg) {
+              const ccmp = String(r.campaign_external_id ?? pageCampaignId ?? "");
+              prefix =
+                yandexLogin && /^\d+$/.test(ccmp) && /^\d+$/.test(lg) ? (
+                  <>
+                    <DnaExternalLink href={dnaGroupHref(yandexLogin, ccmp, lg)}>{lg}</DnaExternalLink>:{" "}
+                  </>
+                ) : (
+                  `Группа ${lg}: `
+                );
+            }
             return (
               <li key={r.id}>
                 {prefix}«{lk}» и «{rk}»
@@ -632,10 +788,16 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
             const examples =
               (ev.cross_minus_phrase_examples as Array<{ label?: string; phrase?: string; shared_token?: string }> | undefined) ??
               [];
+            const ccmp = String(r.campaign_external_id ?? pageCampaignId ?? "");
             return (
               <div key={r.id} className="rounded-md border border-border/50 px-2 py-2">
                 <p className="font-medium">
-                  Группа {gid}
+                  Группа{" "}
+                  {yandexLogin && /^\d+$/.test(ccmp.trim()) && /^\d+$/.test(gid.trim()) ? (
+                    <DnaExternalLink href={dnaGroupHref(yandexLogin, ccmp.trim(), gid.trim())}>{gid}</DnaExternalLink>
+                  ) : (
+                    gid
+                  )}
                   {gname ? ` — «${gname}»` : ""}
                 </p>
                 {missing.length > 0 ? (
@@ -709,7 +871,6 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
         <div className="space-y-4 text-sm text-foreground">
           {sorted.map((item) => {
             const ev = item.evidence ?? {};
-            const adId = String(item.ad_external_id ?? ev.ad_id ?? "");
             const url = String(ev.checked_url ?? ev.display_url_full ?? ev.url_value ?? "");
             const field = String(ev.url_field ?? "");
             const sid = ev.sitelink_id != null ? String(ev.sitelink_id) : "";
@@ -736,7 +897,7 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
             const domainShiftRu = String(ev.domain_shift_ru ?? "").trim();
             return (
               <div key={item.id} className="rounded-md border border-border/50 px-2 py-2">
-                <p className="font-medium">Объявление {adId || "—"}</p>
+                <p className="font-medium">{renderLinkedAdTitle(item, ev)}</p>
                 {field ? (
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     Поле: {field}
@@ -846,14 +1007,13 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
         <div className="space-y-4 text-sm text-foreground">
           {sorted.map((item) => {
             const ev = item.evidence ?? {};
-            const adId = String(item.ad_external_id ?? ev.ad_id ?? "");
             const mainUrl = String(ev.main_url ?? ev.main_url_display ?? "");
             const rows =
               (ev.sitelink_urls as { url?: string; sitelink_id?: string; matches_main_domain?: boolean }[]) ?? [];
             const note = String(ev.urls_comparison_note_ru ?? "").trim();
             return (
               <div key={item.id} className="rounded-md border border-border/50 px-2 py-2">
-                <p className="font-medium">Объявление {adId || "—"}</p>
+                <p className="font-medium">{renderLinkedAdTitle(item, ev)}</p>
                 {note ? <p className="mt-1 text-xs text-muted-foreground">{note}</p> : null}
                 <p className="mt-2 text-xs font-medium text-muted-foreground">Основная ссылка объявления</p>
                 <p className="break-all font-mono text-[11px]">{mainUrl || "—"}</p>
@@ -884,13 +1044,12 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
           {sorted.map((item) => {
             const ev = item.evidence ?? {};
             if (String(ev.scope ?? "") === "account") return null;
-            const adId = String(item.ad_external_id ?? ev.ad_id ?? "");
             const conflicts = ev.utm_conflicts as Record<string, string[]> | undefined;
             const expl = String(ev.issue_explanation_ru ?? "").trim();
             if (!conflicts || !Object.keys(conflicts).length) return null;
             return (
               <div key={item.id} className="rounded-md border border-border/50 px-2 py-2">
-                <p className="font-medium">Объявление {adId || "—"}</p>
+                <p className="font-medium">{renderLinkedAdTitle(item, ev)}</p>
                 <ul className="mt-1 list-inside list-disc text-xs">
                   {Object.entries(conflicts).map(([k, vals]) => (
                     <li key={k}>
@@ -915,12 +1074,11 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
         <ul className="mt-1 space-y-2 text-sm text-foreground">
           {sorted.map((item) => {
             const ev = item.evidence ?? {};
-            const adId = String(item.ad_external_id ?? ev.ad_id ?? "");
             const matched = String(ev.matched_date_text ?? "");
             const today = String(ev.audit_reference_today_ru ?? ev.audit_reference_today ?? "");
             return (
               <li key={item.id} className="rounded-md border border-border/50 px-2 py-2">
-                <p className="font-medium">Объявление {adId || "—"}</p>
+                <p className="font-medium">{renderLinkedAdTitle(item, ev)}</p>
                 <p className="mt-1 text-xs">
                   Дата в тексте (как указано):{" "}
                   <span className="font-semibold text-destructive">«{matched}»</span>
@@ -941,7 +1099,6 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
         <ul className="mt-1 space-y-2 text-sm text-foreground">
           {sorted.map((item) => {
             const ev = item.evidence ?? {};
-            const adId = String(item.ad_external_id ?? ev.ad_id ?? "");
             const ext = String(ev.extension_type ?? "");
             const matched = String(ev.matched_date_text ?? "");
             const today = String(ev.audit_reference_today_ru ?? ev.audit_reference_today ?? "");
@@ -949,7 +1106,7 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
             const ct = String(ev.callout_text ?? "").trim();
             return (
               <li key={item.id} className="rounded-md border border-border/50 px-2 py-2">
-                <p className="font-medium">Объявление {adId || "—"}</p>
+                <p className="font-medium">{renderLinkedAdTitle(item, ev)}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   Расширение: {ext || "—"}
                   {st ? ` — быстрая ссылка «${st}»` : ""}
@@ -975,12 +1132,11 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
         <div className="space-y-3 text-sm text-foreground">
           {sorted.map((item) => {
             const ev = item.evidence ?? {};
-            const adId = String(item.ad_external_id ?? ev.ad_id ?? "");
             const raw = String(ev.ad_text_for_audit ?? "");
             const segments = (ev.text_highlight_segments as HighlightSeg[]) ?? [];
             return (
               <div key={item.id} className="rounded-md border border-border/50 px-2 py-2">
-                <p className="font-medium">Объявление {adId || "—"}</p>
+                <p className="font-medium">{renderLinkedAdTitle(item, ev)}</p>
                 <p className="mt-1 text-xs text-muted-foreground">Текст объявления (заголовок и текст)</p>
                 {segments.length > 0 ? (
                   <SegmentInline segments={segments} />
@@ -1002,13 +1158,12 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
         <div className="space-y-3 text-sm text-foreground">
           {sorted.map((item) => {
             const ev = item.evidence ?? {};
-            const adId = String(item.ad_external_id ?? ev.ad_id ?? "");
             const urls =
               (ev.broken_sitelink_urls as Array<{ sitelink_id?: string; url?: string }> | undefined) ?? [];
             const ids = (ev.broken_sitelinks as string[] | undefined) ?? [];
             return (
               <div key={item.id}>
-                <p className="font-medium">Объявление {adId || "—"}</p>
+                <p className="font-medium">{renderLinkedAdTitle(item, ev)}</p>
                 {urls.length > 0 ? (
                   <ul className="mt-1 list-inside list-disc break-all font-mono text-xs">
                     {urls.map((u, idx) => (
@@ -1050,7 +1205,11 @@ export function GroupedDetailsSection({ row }: { row: DisplayRow }): ReactElemen
             const cid = String(r.campaign_external_id ?? ev.campaign_id ?? "");
             return (
               <div key={r.id} className="rounded-md border border-border/50 px-2 py-2">
-                {cid ? <p className="font-medium">Кампания {cid}</p> : null}
+                {cid ? (
+                  <p className="font-medium">
+                    Кампания {renderLinkedCampaignId(cid)}
+                  </p>
+                ) : null}
                 {logic ? <p className="mt-1 text-xs leading-snug text-muted-foreground">{logic}</p> : null}
                 {row.rule_code === "CAMPAIGN_CHRONIC_BUDGET_LIMIT" ? (
                   <ul className="mt-1 list-inside list-disc text-xs text-muted-foreground">
